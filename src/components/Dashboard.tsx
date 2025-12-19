@@ -1,11 +1,36 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Mic } from 'lucide-react';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import { BROADCAST_CHANNEL_NAME, sendMessage } from '../utils/broadcast';
 
 export const Dashboard = () => {
-    const { text, interimText, isListening, startListening, stopListening, error } = useSpeechRecognition();
+    const { text, interimText, isListening, startListening, stopListening, error, audioLevel } = useSpeechRecognition();
     const channelRef = useRef<BroadcastChannel | null>(null);
+
+    // Debug Console State
+    const [logs, setLogs] = useState<string[]>([]);
+
+    useEffect(() => {
+        // Hook into console.log to capture logs on screen
+        const originalLog = console.log;
+        const originalError = console.error;
+
+        console.log = (...args) => {
+            const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+            setLogs(prev => [msg, ...prev].slice(0, 10)); // Keep last 10 logs
+            originalLog(...args);
+        };
+        console.error = (...args) => {
+            const msg = "ERR: " + args.map(a => String(a)).join(' ');
+            setLogs(prev => [msg, ...prev].slice(0, 10));
+            originalError(...args);
+        };
+
+        return () => {
+            console.log = originalLog;
+            console.error = originalError;
+        };
+    }, []);
 
     useEffect(() => {
         channelRef.current = new BroadcastChannel(BROADCAST_CHANNEL_NAME);
@@ -48,8 +73,13 @@ export const Dashboard = () => {
             {/* Header */}
             <header className="flex justify-between items-start">
                 <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 bg-gray-900 rounded-2xl flex items-center justify-center border border-gray-800">
-                        <Mic className={`w-6 h-6 ${isListening ? 'text-purple-500 animate-pulse' : 'text-gray-500'}`} />
+                    <div className="w-12 h-12 bg-gray-900 rounded-2xl flex items-center justify-center border border-gray-800 relative overflow-hidden">
+                        {/* Audio Level Background */}
+                        <div
+                            className="absolute bottom-0 left-0 right-0 bg-purple-500/20 transition-all duration-75"
+                            style={{ height: `${audioLevel}%` }}
+                        ></div>
+                        <Mic className={`w-6 h-6 z-10 ${isListening ? 'text-purple-500 animate-pulse' : 'text-gray-500'}`} />
                     </div>
                     <div>
                         <h1 className="text-2xl font-bold tracking-wider text-white">LUMINA</h1>
@@ -57,6 +87,7 @@ export const Dashboard = () => {
                             <span className={`w-2 h-2 rounded-full ${isListening ? 'bg-green-500 animate-pulse' : 'bg-gray-600'}`}></span>
                             <span className="text-xs text-gray-500 uppercase tracking-widest">
                                 {isListening ? 'LISTENING' : 'IDLE'}
+                                {isListening && <span className="text-gray-600 ml-2">VOL: {audioLevel}</span>}
                             </span>
                         </div>
                     </div>
@@ -80,6 +111,13 @@ export const Dashboard = () => {
 
             {/* Center Content / Visualizer */}
             <main className="flex flex-col items-center justify-center flex-1 relative w-full">
+                {/* Debug Console Overlay */}
+                <div className="absolute top-0 right-0 p-4 w-96 font-mono text-[10px] text-gray-500 pointer-events-none opacity-50 text-right">
+                    {logs.map((log, i) => (
+                        <div key={i} className="whitespace-pre-wrap mb-1">{log}</div>
+                    ))}
+                </div>
+
                 {/* Error Toast */}
                 {error && (
                     <div className="absolute top-0 mt-4 px-4 py-2 bg-red-900/80 border border-red-500/50 rounded-full flex items-center gap-2 backdrop-blur-sm animate-pulse z-50">
@@ -88,13 +126,13 @@ export const Dashboard = () => {
                     </div>
                 )}
 
-                {/* Visualizer - Always visible but dimmed if idle/error */}
+                {/* Visualizer - Reacts to Audio Level */}
                 <div className={`flex items-end gap-2 h-16 mb-8 transition-all duration-500 ${isListening ? 'opacity-100 scale-100' : 'opacity-30 scale-90'}`}>
-                    <div className={`w-2 bg-purple-500 rounded-full ${isListening ? 'animate-bar' : 'h-2'}`}></div>
-                    <div className={`w-2 bg-purple-500 rounded-full ${isListening ? 'animate-bar delay-100' : 'h-4'}`}></div>
-                    <div className={`w-2 bg-purple-500 rounded-full ${isListening ? 'animate-bar delay-200' : 'h-3'}`}></div>
-                    <div className={`w-2 bg-purple-500 rounded-full ${isListening ? 'animate-bar delay-300' : 'h-5'}`}></div>
-                    <div className={`w-2 bg-purple-500 rounded-full ${isListening ? 'animate-bar delay-100' : 'h-2'}`}></div>
+                    <div className="w-2 bg-purple-500 rounded-full transition-all duration-75" style={{ height: `${Math.max(8, audioLevel * 0.5)}px` }}></div>
+                    <div className="w-2 bg-purple-500 rounded-full transition-all duration-75 delay-75" style={{ height: `${Math.max(12, audioLevel * 0.8)}px` }}></div>
+                    <div className="w-2 bg-purple-500 rounded-full transition-all duration-75" style={{ height: `${Math.max(16, audioLevel * 1.2)}px` }}></div>
+                    <div className="w-2 bg-purple-500 rounded-full transition-all duration-75 delay-75" style={{ height: `${Math.max(12, audioLevel * 0.9)}px` }}></div>
+                    <div className="w-2 bg-purple-500 rounded-full transition-all duration-75" style={{ height: `${Math.max(8, audioLevel * 0.6)}px` }}></div>
                 </div>
 
                 <div className="text-center max-w-3xl px-8">
@@ -127,10 +165,10 @@ export const Dashboard = () => {
                     <h3 className="text-gray-500 mb-2 font-bold">Core</h3>
                     <div className="flex items-center gap-2">
                         <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.8)]"></span>
-                        <span>Web Speech Native</span>
+                        <span>Whisper Base (Local)</span>
                     </div>
                     <div className="mt-1 normal-case text-gray-700 tracking-normal">
-                        Real-time neural transcription optimized for minimal latency.
+                        Running offline inference.
                     </div>
                 </div>
             </footer>
