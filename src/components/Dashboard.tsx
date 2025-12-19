@@ -1,10 +1,10 @@
 import { useEffect, useRef } from 'react';
-import { Mic, MicOff, ExternalLink, Settings } from 'lucide-react';
+import { Mic } from 'lucide-react';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import { BROADCAST_CHANNEL_NAME, sendMessage } from '../utils/broadcast';
 
 export const Dashboard = () => {
-    const { text, interimText, isListening, startListening, stopListening, hasSupport, error } = useSpeechRecognition();
+    const { text, interimText, isListening, startListening, stopListening, error } = useSpeechRecognition();
     const channelRef = useRef<BroadcastChannel | null>(null);
 
     useEffect(() => {
@@ -35,94 +35,105 @@ export const Dashboard = () => {
         }
     };
 
-    if (!hasSupport) {
-        return (
-            <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
-                <div className="p-8 bg-red-900/50 rounded-xl border border-red-500">
-                    <h1 className="text-2xl font-bold mb-2">Browser Not Supported</h1>
-                    <p>Your browser does not support the Web Speech API. Please use Google Chrome.</p>
-                </div>
-            </div>
-        );
-    }
+    const toggleListening = () => {
+        if (isListening) {
+            stopListening();
+        } else {
+            startListening();
+        }
+    };
 
     return (
-        <div className="min-h-screen bg-gray-950 text-white p-8 font-sans">
-            <div className="max-w-4xl mx-auto">
-                <header className="flex justify-between items-center mb-12">
+        <div className="h-screen bg-black text-white font-mono flex flex-col justify-between p-8 overflow-hidden select-none">
+            {/* Header */}
+            <header className="flex justify-between items-start">
+                <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-gray-900 rounded-2xl flex items-center justify-center border border-gray-800">
+                        <Mic className={`w-6 h-6 ${isListening ? 'text-purple-500 animate-pulse' : 'text-gray-500'}`} />
+                    </div>
                     <div>
-                        <h1 className="text-3xl font-extrabold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
-                            Live Subtitles
-                        </h1>
-                        <p className="text-gray-400 mt-1">Real-time speech-to-text overlay</p>
-                    </div>
-                    <div className="flex gap-4">
-                        <button
-                            onClick={openPopup}
-                            className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors border border-gray-700"
-                        >
-                            <ExternalLink size={18} />
-                            <span>Open Popup</span>
-                        </button>
-                        <button className="p-2 hover:bg-gray-800 rounded-lg transition-colors text-gray-400 hover:text-white">
-                            <Settings size={24} />
-                        </button>
-                    </div>
-                </header>
-
-                <main className="grid gap-8">
-                    {/* Controls */}
-                    <div className="flex justify-center">
-                        <button
-                            onClick={isListening ? stopListening : startListening}
-                            className={`
-                        group relative flex items-center gap-3 px-8 py-4 rounded-full text-xl font-bold transition-all duration-300
-                        ${isListening
-                                    ? 'bg-red-500 hover:bg-red-600 shadow-[0_0_20px_rgba(239,68,68,0.5)]'
-                                    : 'bg-indigo-600 hover:bg-indigo-500 shadow-[0_0_20px_rgba(79,70,229,0.5)]'
-                                }
-                    `}
-                        >
-                            {isListening ? (
-                                <>
-                                    <MicOff className="animate-pulse" /> Stop Listening
-                                </>
-                            ) : (
-                                <>
-                                    <Mic /> Start Listening
-                                </>
-                            )}
-                        </button>
-                    </div>
-
-                    {/* Preview Window */}
-                    <div className="bg-gray-900/50 rounded-2xl p-8 border border-gray-800 min-h-[300px] shadow-inner relative overflow-hidden">
-                        <div className="absolute top-4 left-4 text-xs font-semibold text-gray-500 uppercase tracking-widest">
-                            Preview
-                        </div>
-
-                        <div className="mt-8 text-center">
-                            {error ? (
-                                <div className="p-4 bg-red-900/40 text-red-200 rounded-lg inline-block border border-red-500/50">
-                                    <p className="font-bold">Error: {error}</p>
-                                    <p className="text-sm mt-1">Please ensure your microphone is connected and allowed.</p>
-                                    {error === 'network' && <p className="text-xs mt-1 text-red-300">Network error: Web Speech API requires internet connection.</p>}
-                                </div>
-                            ) : text || interimText ? (
-                                <p className="text-3xl leading-relaxed font-medium">
-                                    <span className="text-white">{text}</span>
-                                    <span className="text-gray-500 italic ml-1">{interimText}</span>
-                                </p>
-                            ) : (
-                                <div className="flex flex-col items-center justify-center h-48 text-gray-600">
-                                    <p className="mb-2">Ready to transcribe...</p>
-                                    <p className="text-sm">Click "Start Listening" and speak into your microphone.</p>
-                                </div>
-                            )}
+                        <h1 className="text-2xl font-bold tracking-wider text-white">LUMINA</h1>
+                        <div className="flex items-center gap-2 mt-1">
+                            <span className={`w-2 h-2 rounded-full ${isListening ? 'bg-green-500 animate-pulse' : 'bg-gray-600'}`}></span>
+                            <span className="text-xs text-gray-500 uppercase tracking-widest">
+                                {isListening ? 'LISTENING' : 'IDLE'}
+                            </span>
                         </div>
                     </div>
-                </main>
-            </div>
+                </div>
+
+                <div className="flex items-center gap-4">
+                    <button
+                        onClick={openPopup}
+                        className="px-6 py-2 rounded-full border border-gray-800 text-xs font-bold tracking-widest text-gray-400 hover:text-white hover:border-gray-600 transition-all uppercase"
+                    >
+                        Overlay View
+                    </button>
+                    <button
+                        onClick={toggleListening}
+                        className="px-6 py-2 rounded-full bg-white text-black text-xs font-bold tracking-widest hover:bg-gray-200 transition-all uppercase shadow-[0_0_20px_rgba(255,255,255,0.3)]"
+                    >
+                        {isListening ? 'Stop Feed' : 'Launch Feed'}
+                    </button>
+                </div>
+            </header>
+
+            {/* Center Content / Visualizer */}
+            <main className="flex flex-col items-center justify-center flex-1 relative w-full">
+                {/* Error Toast */}
+                {error && (
+                    <div className="absolute top-0 mt-4 px-4 py-2 bg-red-900/80 border border-red-500/50 rounded-full flex items-center gap-2 backdrop-blur-sm animate-pulse z-50">
+                        <span className="w-2 h-2 bg-red-500 rounded-full"></span>
+                        <span className="text-xs text-red-200 uppercase tracking-wider">{error}</span>
+                    </div>
+                )}
+
+                {/* Visualizer - Always visible but dimmed if idle/error */}
+                <div className={`flex items-end gap-2 h-16 mb-8 transition-all duration-500 ${isListening ? 'opacity-100 scale-100' : 'opacity-30 scale-90'}`}>
+                    <div className={`w-2 bg-purple-500 rounded-full ${isListening ? 'animate-bar' : 'h-2'}`}></div>
+                    <div className={`w-2 bg-purple-500 rounded-full ${isListening ? 'animate-bar delay-100' : 'h-4'}`}></div>
+                    <div className={`w-2 bg-purple-500 rounded-full ${isListening ? 'animate-bar delay-200' : 'h-3'}`}></div>
+                    <div className={`w-2 bg-purple-500 rounded-full ${isListening ? 'animate-bar delay-300' : 'h-5'}`}></div>
+                    <div className={`w-2 bg-purple-500 rounded-full ${isListening ? 'animate-bar delay-100' : 'h-2'}`}></div>
+                </div>
+
+                <div className="text-center max-w-3xl px-8">
+                    <p className={`text-gray-600 text-sm tracking-[0.2em] uppercase mb-4 transition-opacity ${isListening ? 'opacity-100' : 'opacity-50'}`}>
+                        {error ? 'System Offline' : isListening ? 'Capturing Audio Stream' : 'System Idle'}
+                    </p>
+                    {/* Live Transcript Preview */}
+                    <div className="min-h-[60px]">
+                        {(text || interimText) ? (
+                            <p className="text-xl md:text-2xl text-gray-300 font-sans leading-relaxed transition-all">
+                                {text} <span className="text-purple-400 opacity-70 border-b border-purple-500/30">{interimText}</span>
+                            </p>
+                        ) : (
+                            <p className="text-gray-800 italic font-serif">...</p>
+                        )}
+                    </div>
+                </div>
+            </main>
+
+            {/* Footer */}
+            <footer className="grid grid-cols-2 text-[10px] text-gray-600 tracking-widest uppercase border-t border-gray-900/50 pt-8">
+                <div>
+                    <h3 className="text-gray-500 mb-2 font-bold">Control</h3>
+                    <div className="flex items-center gap-2">
+                        <span className="border border-gray-700 px-2 py-1 rounded text-gray-400">ESC</span>
+                        <span>Toggle Interface</span>
+                    </div>
+                </div>
+                <div>
+                    <h3 className="text-gray-500 mb-2 font-bold">Core</h3>
+                    <div className="flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.8)]"></span>
+                        <span>Web Speech Native</span>
+                    </div>
+                    <div className="mt-1 normal-case text-gray-700 tracking-normal">
+                        Real-time neural transcription optimized for minimal latency.
+                    </div>
+                </div>
+            </footer>
         </div>
     );
 };
