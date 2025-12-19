@@ -4,7 +4,7 @@ import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import { BROADCAST_CHANNEL_NAME, sendMessage } from '../utils/broadcast';
 
 export const Dashboard = () => {
-    const { text, interimText, isListening, startListening, stopListening, error, audioLevel } = useSpeechRecognition();
+    const { text, interimText, isListening, startListening, stopListening, error, audioLevel, isModelLoading, reloadModel } = useSpeechRecognition();
     const channelRef = useRef<BroadcastChannel | null>(null);
 
     // Debug Console State
@@ -101,10 +101,14 @@ export const Dashboard = () => {
                         Overlay View
                     </button>
                     <button
-                        onClick={toggleListening}
-                        className="px-6 py-2 rounded-full bg-white text-black text-xs font-bold tracking-widest hover:bg-gray-200 transition-all uppercase shadow-[0_0_20px_rgba(255,255,255,0.3)]"
+                        onClick={error ? reloadModel : toggleListening}
+                        disabled={isModelLoading}
+                        className={`px-6 py-2 rounded-full text-xs font-bold tracking-widest transition-all uppercase shadow-[0_0_20px_rgba(255,255,255,0.3)] 
+                            ${(isModelLoading)
+                                ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                                : (error ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-white text-black hover:bg-gray-200')}`}
                     >
-                        {isListening ? 'Stop Feed' : 'Launch Feed'}
+                        {error ? 'Retry Connection' : (isModelLoading ? 'Initializing Model...' : (isListening ? 'Stop Feed' : 'Launch Feed'))}
                     </button>
                 </div>
             </header>

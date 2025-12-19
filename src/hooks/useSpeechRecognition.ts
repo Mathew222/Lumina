@@ -9,6 +9,8 @@ export interface UseSpeechRecognitionReturn {
     hasSupport: boolean;
     error: string | null;
     audioLevel: number;
+    isModelLoading: boolean;
+    reloadModel: () => void;
 }
 
 export function useSpeechRecognition(): UseSpeechRecognitionReturn {
@@ -17,21 +19,30 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
     const [isListening, setIsListening] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [audioLevel, setAudioLevel] = useState(0);
+    const [isModelLoading, setIsModelLoading] = useState(true);
 
     const workerRef = useRef<Worker | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
     const processorRef = useRef<ScriptProcessorNode | null>(null);
     const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
 
+    const [retryCount, setRetryCount] = useState(0);
+
+    const isModelLoadingRef = useRef(isModelLoading);
+
+    useEffect(() => {
+        isModelLoadingRef.current = isModelLoading;
+    }, [isModelLoading]);
+
     useEffect(() => {
         // Initialize Worker
         workerRef.current = new Worker(new URL('../workers/whisper.worker.js', import.meta.url), { type: 'module' });
-
         workerRef.current.onmessage = (event) => {
             const { type, text: resultText, error: resultError, message } = event.data;
 
             if (type === 'ready') {
                 console.log('[Hook] Worker reported ready');
+                setIsModelLoading(false);
                 setError(null);
             } else if (type === 'debug') {
                 console.log(`[Worker Debug] ${message}`);
@@ -40,26 +51,38 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
                     const clean = resultText.trim();
                     console.log(`[Hook] Received text: "${clean}"`);
                     if (clean.length > 0) {
-                        setText(() => {
-                            // Start fresh with new chunk for "Live Subtitle" feel
-                            // If we want history, we would do: (prev) => prev + " " + clean
-                            return clean;
-                        });
-                        setInterimText(""); // Clear processing status
+                        setText(() => clean);
+                        setInterimText("");
                     }
                 }
             } else if (type === 'error') {
                 console.error('[Hook] Worker Error:', resultError);
                 setError("Engine Error: " + resultError);
+                setIsModelLoading(false); // Stop loading on error
             }
         };
-
         workerRef.current.postMessage({ type: 'init' });
 
         return () => {
             workerRef.current?.terminate();
         };
-    }, []);
+    }, [retryCount]);
+
+    const stopListening = () => {
+        sourceRef.current?.disconnect();
+        processorRef.current?.disconnect();
+        audioContextRef.current?.close();
+        setIsListening(false);
+        setAudioLevel(0);
+    };
+
+    const reloadModel = () => {
+        console.log('[Hook] Reloading model...');
+        stopListening(); // Force stop mic to prevent race conditions
+        setIsModelLoading(true);
+        setError(null);
+        setRetryCount(c => c + 1);
+    };
 
     const startListening = async () => {
         setError(null);
@@ -84,9 +107,12 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
 
             let buffer: Float32Array[] = [];
             let bufferLength = 0;
-            const CHUNK_SIZE = 16000 * 4; // 4 seconds chunk
+            const CHUNK_SIZE = 16000 * 2; // Reduced to 2 seconds for faster feedback
 
             processor.onaudioprocess = (e) => {
+                // GUARD: Do not process if model is loading (checked via Ref to avoid stale closure)
+                if (isModelLoadingRef.current) return;
+
                 const input = e.inputBuffer.getChannelData(0);
 
                 // Calculate Volume Meter
@@ -95,6 +121,11 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
                     sum += input[i] * input[i];
                 }
                 const rms = Math.sqrt(sum / input.length);
+
+                if (rms > 0.05) {
+                    // console.log(`[Audio] Input detected, RMS: ${rms.toFixed(4)}`);
+                }
+
                 // Normalized rough scale (0-100)
                 const level = Math.min(100, Math.round(rms * 1000));
                 setAudioLevel(level);
@@ -104,7 +135,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
                 bufferLength += chunk.length;
 
                 if (bufferLength >= CHUNK_SIZE) {
-                    // console.log(`[Hook] Sending audio chunk (${bufferLength} samples)`);
+                    console.log(`[Hook] Sending audio chunk (${bufferLength} samples) to worker`);
 
                     const fullBuffer = new Float32Array(bufferLength);
                     let offset = 0;
@@ -116,6 +147,8 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
                     if (workerRef.current) {
                         workerRef.current.postMessage({ type: 'transcribe', audio: fullBuffer });
                         setInterimText("Thinking...");
+                    } else {
+                        console.warn("[Hook] Worker reference is null!");
                     }
 
                     buffer = [];
@@ -140,14 +173,6 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
         }
     };
 
-    const stopListening = () => {
-        sourceRef.current?.disconnect();
-        processorRef.current?.disconnect();
-        audioContextRef.current?.close();
-        setIsListening(false);
-        setAudioLevel(0); // Reset audio level when stopping
-    };
-
     return {
         text,
         interimText,
@@ -157,5 +182,6 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
         hasSupport: true,
         error,
         audioLevel,
+        reloadModel,
     };
 }
