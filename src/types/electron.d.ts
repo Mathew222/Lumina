@@ -1,11 +1,12 @@
 export interface ElectronAPI {
     toggleOverlay: () => void;
-    sendTranscript: (data: { text: string; interim: string }) => void;
-    onTranscriptUpdate: (callback: (data: { text: string; interim: string }) => void) => () => void;
+    sendTranscript: (data: any) => void;
+    onTranscriptUpdate: (callback: (data: any) => void) => () => void;
+    getAudioSources: () => Promise<any[]>;
 }
 
 declare global {
     interface Window {
-        electron?: ElectronAPI;
+        electron: ElectronAPI;
     }
 }

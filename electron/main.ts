@@ -15,6 +15,15 @@ function createMainWindow() {
         },
     });
 
+    // Enable screen capture permissions
+    mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+        if (permission === 'media') {
+            callback(true);
+        } else {
+            callback(false);
+        }
+    });
+
     // In dev, load localhost. In prod, load index.html
     const startUrl = process.env.ELECTRON_START_URL || `file://${path.join(__dirname, '../dist/index.html')}`;
     mainWindow.loadURL(startUrl);

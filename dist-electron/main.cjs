@@ -36,6 +36,13 @@ function createMainWindow() {
       contextIsolation: true
     }
   });
+  mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (permission === "media") {
+      callback(true);
+    } else {
+      callback(false);
+    }
+  });
   const startUrl = process.env.ELECTRON_START_URL || `file://${import_path.default.join(__dirname, "../dist/index.html")}`;
   mainWindow.loadURL(startUrl);
   mainWindow.on("closed", () => {

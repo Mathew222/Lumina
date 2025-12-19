@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, desktopCapturer } = require('electron');
 
 contextBridge.exposeInMainWorld('electron', {
     toggleOverlay: () => ipcRenderer.send('toggle-overlay'),
@@ -10,4 +10,12 @@ contextBridge.exposeInMainWorld('electron', {
             ipcRenderer.removeListener('transcript-update', subscription);
         };
     },
+    // Expose desktopCapturer for system audio capture
+    getAudioSources: async () => {
+        const sources = await desktopCapturer.getSources({
+            types: ['screen', 'window'],
+            fetchWindowIcons: false
+        });
+        return sources;
+    }
 });

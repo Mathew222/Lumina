@@ -87,14 +87,60 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
     const startListening = async () => {
         setError(null);
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({
+            // Use Electron's desktopCapturer to get system audio
+            console.log('[Hook] Requesting audio sources from Electron...');
+
+            if (!(window as any).electron || !(window as any).electron.getAudioSources) {
+                console.error('[Hook] Electron API missing. Make sure preload script is loaded and app is restarted.');
+                throw new Error('Electron API not initialized. Please restart the app.');
+            }
+
+            const sources = await (window as any).electron.getAudioSources();
+            console.log('[Hook] Sources received:', sources);
+
+            if (!sources || sources.length === 0) {
+                throw new Error('No audio sources available');
+            }
+
+            // Use the first screen source (usually entire screen with audio)
+            const screenSource = sources.find((s: any) => s.id.startsWith('screen')) || sources[0];
+            console.log('[Hook] Selected source:', screenSource);
+
+            const constraints = {
                 audio: {
-                    channelCount: 1,
-                    sampleRate: 16000,
-                    echoCancellation: true,
-                    noiseSuppression: true
+                    mandatory: {
+                        chromeMediaSource: 'desktop',
+                        chromeMediaSourceId: screenSource.id
+                    }
+                },
+                video: {
+                    mandatory: {
+                        chromeMediaSource: 'desktop',
+                        chromeMediaSourceId: screenSource.id,
+                        maxWidth: 1280, // Relaxed from 1
+                        maxHeight: 720, // Relaxed from 1
+                        maxFrameRate: 30
+                    }
                 }
-            });
+            };
+            console.log('[Hook] Using constraints:', JSON.stringify(constraints, null, 2));
+
+            // Get media stream using the source ID
+            const stream = await navigator.mediaDevices.getUserMedia(constraints as any);
+            console.log('[Hook] Stream acquired:', stream.id);
+
+            // Stop video track immediately (we only need audio)
+            const videoTrack = stream.getVideoTracks()[0];
+            if (videoTrack) {
+                videoTrack.stop();
+                stream.removeTrack(videoTrack);
+            }
+
+            // Verify we have audio
+            const audioTracks = stream.getAudioTracks();
+            if (audioTracks.length === 0) {
+                throw new Error('No audio track found in the captured stream');
+            }
 
             const audioContext = new AudioContext({ sampleRate: 16000 });
             audioContextRef.current = audioContext;
