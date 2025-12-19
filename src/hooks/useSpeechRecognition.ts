@@ -107,7 +107,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
 
             let buffer: Float32Array[] = [];
             let bufferLength = 0;
-            const CHUNK_SIZE = 16000 * 2; // Reduced to 2 seconds for faster feedback
+            const CHUNK_SIZE = 16000 * 5; // 5 seconds for better accuracy (more context)
 
             processor.onaudioprocess = (e) => {
                 // GUARD: Do not process if model is loading (checked via Ref to avoid stale closure)
@@ -182,6 +182,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
         hasSupport: true,
         error,
         audioLevel,
+        isModelLoading,
         reloadModel,
     };
 }

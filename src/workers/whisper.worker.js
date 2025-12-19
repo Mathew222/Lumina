@@ -57,27 +57,19 @@ const init = async () => {
             }
         }
 
-        // Use absolute URL to prevent double-pathing (e.g. /models/models/...)
-        const P_MODEL_PATH = new URL('/models/whisper-base.en', self.location.origin).toString();
+        // Log worker context info
+        console.log('[Worker] self.location:', self.location);
+        console.log('[Worker] self.location.origin:', self.location.origin);
+        console.log('[Worker] self.location.href:', self.location.href);
 
-        console.log(`[Worker] Initializing pipeline with path: ${P_MODEL_PATH}`);
+        // Try simple relative path first
+        const P_MODEL_PATH = 'whisper-base.en';
 
-        // PRE-FLIGHT CHECK: Verify this URL actually works
-        try {
-            const checkUrl = P_MODEL_PATH + '/config.json';
-            const checkResp = await fetch(checkUrl);
-            const checkText = await checkResp.text();
-            if (checkText.trim().startsWith('<')) {
-                throw new Error(`PRE-FLIGHT FAIL: ${checkUrl} returned HTML (404). Check your public folder structure!`);
-            }
-            console.log(`[Worker] Pre-flight OK: Found config.json (${checkText.length} bytes)`);
-        } catch (e) {
-            self.postMessage({ type: 'error', error: e.message });
-            throw e;
-        }
+        console.log(`[Worker] Attempting to load model from: ${P_MODEL_PATH}`);
+        self.postMessage({ type: 'debug', message: `Model path: ${P_MODEL_PATH}` });
 
         transcriber = await pipeline('automatic-speech-recognition', P_MODEL_PATH, {
-            local_files_only: false, // Allow fetching from "URL" (which is local)
+            local_files_only: false,
         });
 
         console.log('[Worker] Model loaded successfully');
@@ -109,7 +101,11 @@ self.onmessage = async (event) => {
                 language: 'english',
                 task: 'transcribe',
                 chunk_length_s: 30,
-                stride_length_s: 5,
+                return_timestamps: false,
+                // Better accuracy settings
+                temperature: 0.0,  // Deterministic output
+                best_of: 3,        // Try 3 candidates, pick best
+                beam_size: 5,      // Beam search for better quality
             });
             const end = performance.now();
 
