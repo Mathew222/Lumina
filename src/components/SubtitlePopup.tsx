@@ -37,10 +37,15 @@ export const SubtitlePopup = () => {
 
     return (
         <div className="flex items-end justify-center h-screen w-screen p-4 pb-12">
-            <div className="text-center">
-                <p className="text-white text-4xl font-sans font-bold drop-shadow-md transition-all duration-150">
+            <div className="text-center max-w-5xl">
+                <p className="text-white text-4xl md:text-5xl font-sans font-bold drop-shadow-lg transition-all duration-75 ease-out leading-relaxed">
                     {text}
-                    <span className="text-gray-300 ml-2 italic">{interim}</span>
+                    {interim && (
+                        <span className="text-gray-400 ml-2 italic animate-pulse">{interim}</span>
+                    )}
+                    {!text && !interim && (
+                        <span className="text-gray-600 text-2xl">Listening for audio...</span>
+                    )}
                 </p>
             </div>
         </div>

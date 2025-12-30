@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Mic } from 'lucide-react';
-import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
+import { useVoskRecognition } from '../hooks/useVoskRecognition';
 import { BROADCAST_CHANNEL_NAME, sendMessage } from '../utils/broadcast';
 
 export const Dashboard = () => {
-    const { text, interimText, isListening, startListening, stopListening, error, audioLevel, isModelLoading, reloadModel } = useSpeechRecognition();
+    const { text, interimText, isListening, startListening, stopListening, error, audioLevel, isModelLoading, reloadModel } = useVoskRecognition();
     const channelRef = useRef<BroadcastChannel | null>(null);
 
     // Debug Console State
@@ -169,7 +169,7 @@ export const Dashboard = () => {
                     <h3 className="text-gray-500 mb-2 font-bold">Core</h3>
                     <div className="flex items-center gap-2">
                         <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.8)]"></span>
-                        <span>Whisper Base (Local)</span>
+                        <span>Vosk (Low Latency)</span>
                     </div>
                     <div className="mt-1 normal-case text-gray-700 tracking-normal">
                         Running offline inference.

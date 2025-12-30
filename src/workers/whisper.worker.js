@@ -41,6 +41,9 @@ const init = async () => {
             '/models/whisper-base.en/vocab.json',
             '/models/whisper-base.en/preprocessor_config.json',
             '/models/whisper-base.en/special_tokens_map.json',
+            '/models/whisper-base.en/encoder_model_quantized.onnx',
+            '/models/whisper-base.en/decoder_model_quantized.onnx',
+            '/models/whisper-base.en/decoder_model_merged_quantized.onnx',
             '/ort-wasm-simd.wasm'
         ];
 
@@ -62,8 +65,8 @@ const init = async () => {
         console.log('[Worker] self.location.origin:', self.location.origin);
         console.log('[Worker] self.location.href:', self.location.href);
 
-        // Try simple relative path first
-        const P_MODEL_PATH = 'whisper-base.en';
+        // Use the full URL path to the model in public/models
+        const P_MODEL_PATH = self.location.origin + '/models/whisper-base.en';
 
         console.log(`[Worker] Attempting to load model from: ${P_MODEL_PATH}`);
         self.postMessage({ type: 'debug', message: `Model path: ${P_MODEL_PATH}` });
@@ -88,7 +91,8 @@ self.onmessage = async (event) => {
     if (type === 'init') {
         await init();
     } else if (type === 'transcribe') {
-        self.postMessage({ type: 'debug', message: `Processing ${audio.length} samples...` });
+        // Reduced logging for performance
+        // self.postMessage({ type: 'debug', message: `Processing ${audio.length} samples...` });
 
         if (!transcriber) {
             self.postMessage({ type: 'error', error: "Transcriber not initialized!" });
@@ -97,36 +101,48 @@ self.onmessage = async (event) => {
 
         try {
             const start = performance.now();
-            
+
             // Calculate actual duration for optimal chunk_length_s
             const durationSeconds = audio.length / 16000;
-            const chunkLength = Math.max(1, Math.min(30, Math.ceil(durationSeconds * 1.2))); // Slightly larger for context
-            
-            // Optimized settings for faster live transcription
+            const chunkLength = Math.max(0.5, Math.min(30, Math.ceil(durationSeconds))); // Match actual duration
+
+            // Maximum speed settings for live transcription
             const output = await transcriber(audio, {
                 language: 'english',
                 task: 'transcribe',
                 chunk_length_s: chunkLength,
                 return_timestamps: false,
-                // Faster settings for live transcription
+                // Maximum speed settings - prioritize speed over accuracy
                 temperature: 0.0,
-                // Reduced beam search for speed
-                beam_size: 3,      // Reduced from 5 for faster processing
-                best_of: 1,         // Reduced from 3 for speed
-                // Better for live transcription
-                no_speech_threshold: 0.4,
-                logprob_threshold: -1.2,
+                // Minimal processing for maximum speed
+                beam_size: 1,      // Single beam for fastest processing
+                best_of: 1,        // Single candidate
+                // Very permissive thresholds to catch all speech quickly
+                no_speech_threshold: 0.2,  // Very low to catch more speech
+                logprob_threshold: -1.5,   // Very permissive
             });
-            
+
             const end = performance.now();
             const duration = (end - start).toFixed(0);
 
-            if (output && output.text) {
-                const text = output.text.trim();
-                self.postMessage({ type: 'debug', message: `Done in ${duration}ms (${durationSeconds.toFixed(1)}s audio): "${text}"` });
-                self.postMessage({ type: 'result', text: text });
+            // Handle different output formats
+            let text = '';
+            if (typeof output === 'string') {
+                text = output;
+            } else if (output && output.text) {
+                text = output.text;
+            } else if (output && output.transcription) {
+                text = output.transcription;
+            }
+
+            const trimmed = text.trim();
+
+            if (trimmed.length > 0) {
+                // Reduced logging for performance - only send result
+                self.postMessage({ type: 'result', text: trimmed });
             } else {
-                self.postMessage({ type: 'debug', message: `No text in output after ${duration}ms` });
+                // Don't log empty results - just send empty
+                self.postMessage({ type: 'result', text: '' });
             }
         } catch (error) {
             console.error('[Worker] Inference error', error);

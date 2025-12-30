@@ -36,8 +36,9 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
     }, [isModelLoading]);
 
     useEffect(() => {
-        // Initialize Worker
-        workerRef.current = new Worker(new URL('../workers/whisper.worker.js', import.meta.url), { type: 'module' });
+        // Initialize Worker - using Vosk for low latency
+        // Use regular worker (not module) since Vosk uses importScripts
+        workerRef.current = new Worker(new URL('../workers/vosk.worker.js', import.meta.url));
         workerRef.current.onmessage = (event) => {
             const { type, text: resultText, error: resultError, message } = event.data;
 
@@ -46,31 +47,47 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
                 setIsModelLoading(false);
                 setError(null);
             } else if (type === 'debug') {
-                console.log(`[Worker Debug] ${message}`);
-            } else if (type === 'result') {
-                isProcessingRef.current = false;
+                console.log(`[Vosk Worker Debug] ${message}`);
+            } else if (type === 'partial') {
+                // Vosk provides partial results for very low latency
                 if (resultText) {
                     const clean = resultText.trim();
-                    console.log(`[Hook] Received text: "${clean}"`);
                     if (clean.length > 0) {
-                        // For live transcription, append new text intelligently
+                        setInterimText(clean);
+                    }
+                }
+            } else if (type === 'result') {
+                // Allow parallel processing - don't block immediately
+                setTimeout(() => {
+                    isProcessingRef.current = false;
+                }, 50);
+                
+                if (resultText) {
+                    const clean = resultText.trim();
+                    if (clean.length > 0) {
+                        // Fast live subtitles - simple append strategy
                         setText((prev) => {
-                            // If previous text exists, check if new text is continuation or new sentence
-                            if (prev && clean.length > 0) {
-                                const prevLower = prev.toLowerCase().trim();
-                                const cleanLower = clean.toLowerCase().trim();
-                                
-                                // If new text doesn't start with previous text, it's likely new content
-                                // Append with space if it's clearly different
-                                if (!cleanLower.startsWith(prevLower.slice(-20)) && 
-                                    !prevLower.endsWith(cleanLower.slice(0, 10))) {
-                                    return prev + ' ' + clean;
-                                }
-                                // Otherwise, it might be a refinement - use the longer/more complete version
-                                return clean.length > prev.length ? clean : prev + ' ' + clean;
+                            if (!prev) {
+                                return clean;
                             }
-                            return clean;
+                            
+                            // Quick check: if new text is much longer, replace
+                            if (clean.length > prev.length * 1.3) {
+                                return clean;
+                            }
+                            
+                            // If new text contains most of previous, replace (refinement)
+                            const prevLower = prev.toLowerCase();
+                            const cleanLower = clean.toLowerCase();
+                            if (cleanLower.includes(prevLower.slice(-20))) {
+                                return clean;
+                            }
+                            
+                            // Otherwise append
+                            return prev + ' ' + clean;
                         });
+                        setInterimText("");
+                    } else {
                         setInterimText("");
                     }
                 }
@@ -213,10 +230,11 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
 
             let buffer: Float32Array[] = [];
             let bufferLength = 0;
-            const CHUNK_SIZE = 16000 * 2; // 2 seconds for faster live transcription
-            const OVERLAP_SIZE = 16000 * 0.5; // 0.5 second overlap to avoid cutting words
+            // Vosk can process very small chunks for ultra-low latency
+            const CHUNK_SIZE = 16000 * 0.3; // 0.3 second chunks for very low latency
+            const OVERLAP_SIZE = 16000 * 0.1; // 0.1 second overlap
             let lastProcessTime = 0;
-            const MIN_PROCESS_INTERVAL = 1500; // Process at least every 1.5 seconds
+            const MIN_PROCESS_INTERVAL = 200; // Process every 200ms for ultra-low latency
             let samplesProcessed = 0;
 
             processor.onaudioprocess = (e) => {
@@ -243,10 +261,10 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
                 bufferLength += chunk.length;
 
                 // Process when we have enough audio and enough time has passed
+                // Allow processing even if previous is still running (parallel processing for speed)
                 const now = Date.now();
                 const shouldProcess = bufferLength >= CHUNK_SIZE && 
-                                    (now - lastProcessTime) >= MIN_PROCESS_INTERVAL &&
-                                    !isProcessingRef.current;
+                                    (now - lastProcessTime) >= MIN_PROCESS_INTERVAL;
 
                 if (shouldProcess) {
                     // Calculate average RMS for this chunk
@@ -258,10 +276,11 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
                     }
                     const chunkRMS = Math.sqrt(chunkSum / bufferLength);
                     
-                    // Only send if there's actual audio signal
-                    if (chunkRMS > 0.001 && workerRef.current) {
+                    // Only send if there's actual audio signal (lower threshold for faster response)
+                    // Allow parallel processing - don't block on isProcessingRef
+                    if (chunkRMS > 0.0005 && workerRef.current) {
                         isProcessingRef.current = true;
-                        setInterimText("Listening...");
+                        setInterimText("...");
 
                         // Create buffer for this chunk
                         const fullBuffer = new Float32Array(bufferLength);
@@ -271,13 +290,16 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
                             offset += b.length;
                         }
 
-                        console.log(`[Hook] Sending audio chunk (${bufferLength} samples, ${(bufferLength/16000).toFixed(2)}s, RMS: ${chunkRMS.toFixed(4)})`);
+                        // Reduced logging for performance
+                        if (samplesProcessed % 10 === 0) {
+                            console.log(`[Hook] Sending chunk: ${(bufferLength/16000).toFixed(2)}s`);
+                        }
 
                         // Send to worker
                         workerRef.current.postMessage({ type: 'transcribe', audio: fullBuffer });
                         lastProcessTime = now;
 
-                        // Keep overlap for next chunk (last 0.5 seconds)
+                        // Keep overlap for next chunk (sliding window)
                         const overlapSamples = Math.floor(OVERLAP_SIZE);
                         if (bufferLength > overlapSamples) {
                             const overlapBuffer: Float32Array[] = [];
