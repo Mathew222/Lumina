@@ -1,5 +1,5 @@
 // electron/preload.ts
-var { contextBridge, ipcRenderer, desktopCapturer } = require("electron");
+var { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("electron", {
   toggleOverlay: () => ipcRenderer.send("toggle-overlay"),
   sendTranscript: (data) => ipcRenderer.send("send-transcript", data),
@@ -10,12 +10,8 @@ contextBridge.exposeInMainWorld("electron", {
       ipcRenderer.removeListener("transcript-update", subscription);
     };
   },
-  // Expose desktopCapturer for system audio capture
+  // Get audio sources via IPC from main process (more secure and reliable)
   getAudioSources: async () => {
-    const sources = await desktopCapturer.getSources({
-      types: ["screen", "window"],
-      fetchWindowIcons: false
-    });
-    return sources;
+    return await ipcRenderer.invoke("get-audio-sources");
   }
 });

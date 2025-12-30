@@ -97,6 +97,18 @@ import_electron.app.whenReady().then(() => {
       overlayWindow.webContents.send("transcript-update", data);
     }
   });
+  import_electron.ipcMain.handle("get-audio-sources", async () => {
+    try {
+      const sources = await import_electron.desktopCapturer.getSources({
+        types: ["screen", "window"],
+        fetchWindowIcons: false
+      });
+      return sources;
+    } catch (error) {
+      console.error("Error getting audio sources:", error);
+      throw error;
+    }
+  });
   import_electron.app.on("activate", () => {
     if (import_electron.BrowserWindow.getAllWindows().length === 0) {
       createMainWindow();

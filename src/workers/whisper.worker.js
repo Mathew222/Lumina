@@ -97,21 +97,37 @@ self.onmessage = async (event) => {
 
         try {
             const start = performance.now();
+            
+            // Calculate actual duration for optimal chunk_length_s
+            const durationSeconds = audio.length / 16000;
+            const chunkLength = Math.max(1, Math.min(30, Math.ceil(durationSeconds * 1.2))); // Slightly larger for context
+            
+            // Optimized settings for faster live transcription
             const output = await transcriber(audio, {
                 language: 'english',
                 task: 'transcribe',
-                chunk_length_s: 30,
+                chunk_length_s: chunkLength,
                 return_timestamps: false,
-                // Better accuracy settings
-                temperature: 0.0,  // Deterministic output
-                best_of: 3,        // Try 3 candidates, pick best
-                beam_size: 5,      // Beam search for better quality
+                // Faster settings for live transcription
+                temperature: 0.0,
+                // Reduced beam search for speed
+                beam_size: 3,      // Reduced from 5 for faster processing
+                best_of: 1,         // Reduced from 3 for speed
+                // Better for live transcription
+                no_speech_threshold: 0.4,
+                logprob_threshold: -1.2,
             });
+            
             const end = performance.now();
-
             const duration = (end - start).toFixed(0);
-            self.postMessage({ type: 'debug', message: `Done in ${duration}ms: "${output.text}"` });
-            self.postMessage({ type: 'result', text: output.text });
+
+            if (output && output.text) {
+                const text = output.text.trim();
+                self.postMessage({ type: 'debug', message: `Done in ${duration}ms (${durationSeconds.toFixed(1)}s audio): "${text}"` });
+                self.postMessage({ type: 'result', text: text });
+            } else {
+                self.postMessage({ type: 'debug', message: `No text in output after ${duration}ms` });
+            }
         } catch (error) {
             console.error('[Worker] Inference error', error);
             self.postMessage({ type: 'error', error: "Inference failed: " + error.message });

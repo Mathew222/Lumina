@@ -5,12 +5,12 @@
   "main": "dist-electron/main.cjs",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && npm run electron:build",
+    "build": "npx tsc -b && vite build && npm run electron:build",
     "lint": "eslint .",
     "preview": "vite preview",
     "electron:build": "npx esbuild electron/main.ts --bundle --platform=node --target=node18 --format=cjs --outfile=dist-electron/main.cjs --external:electron && npx esbuild electron/preload.ts --bundle --platform=node --target=node18 --format=cjs --outfile=dist-electron/preload.cjs --external:electron",
     "electron:dev": "concurrently -k \"npm run dev\" \"npm run electron:wait\"",
-    "electron:wait": "wait-on tcp:5173 && npm run electron:build && cross-env ELECTRON_START_URL=http://localhost:5173 electron .",
+    "electron:wait": "wait-on tcp:5173 && npm run electron:build && cross-env ELECTRON_START_URL=http://localhost:5173 node scripts/run-electron.js",
     "dist": "npm run build && electron-builder"
   },
   "dependencies": {
@@ -28,7 +28,7 @@
     "autoprefixer": "^10.4.23",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
-    "electron": "^39.2.7",
+    "electron": "^33.2.0",
     "electron-builder": "^26.0.12",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",

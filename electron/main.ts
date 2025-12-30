@@ -1,5 +1,6 @@
-import { app, BrowserWindow, ipcMain, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, screen, desktopCapturer } from 'electron';
 import path from 'path';
+
 
 let mainWindow: BrowserWindow | null;
 let overlayWindow: BrowserWindow | null;
@@ -23,6 +24,10 @@ function createMainWindow() {
             callback(false);
         }
     });
+
+    // On Windows, system audio capture requires specific permissions
+    // The desktopCapturer should work, but audio might not be included by default
+    // Users may need to enable "Stereo Mix" or similar in Windows sound settings
 
     // In dev, load localhost. In prod, load index.html
     const startUrl = process.env.ELECTRON_START_URL || `file://${path.join(__dirname, '../dist/index.html')}`;
@@ -86,6 +91,19 @@ app.whenReady().then(() => {
     ipcMain.on('send-transcript', (_event, data) => {
         if (overlayWindow) {
             overlayWindow.webContents.send('transcript-update', data);
+        }
+    });
+
+    ipcMain.handle('get-audio-sources', async () => {
+        try {
+            const sources = await desktopCapturer.getSources({
+                types: ['screen', 'window'],
+                fetchWindowIcons: false
+            });
+            return sources;
+        } catch (error) {
+            console.error('Error getting audio sources:', error);
+            throw error;
         }
     });
 
