@@ -1,14 +1,26 @@
-import { useEffect, useRef, useState } from 'react';
-import { Mic } from 'lucide-react';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { Mic, Globe, ChevronDown } from 'lucide-react';
 import { useHybridSpeechRecognition } from '../hooks/useHybridSpeechRecognition';
 import { BROADCAST_CHANNEL_NAME, sendMessage } from '../utils/broadcast';
+import { translateText, translateInterim, LANGUAGES, clearTranslationContext } from '../utils/translate';
+import type { SupportedLanguage } from '../utils/translate';
 
 export const Dashboard = () => {
     const { text, interimText, isListening, startListening, stopListening, error, audioLevel, isModelLoading, reloadModel, engineStatus } = useHybridSpeechRecognition();
     const channelRef = useRef<BroadcastChannel | null>(null);
 
+    // Language state
+    const [targetLanguage, setTargetLanguage] = useState<SupportedLanguage>('en');
+    const [showLanguageMenu, setShowLanguageMenu] = useState(false);
+    const [translatedText, setTranslatedText] = useState('');
+    const [translatedInterim, setTranslatedInterim] = useState('');
+    const [isTranslating, setIsTranslating] = useState(false);
+
     // Debug Console State
     const [logs, setLogs] = useState<string[]>([]);
+
+    // Debounce ref for interim translation
+    const interimTranslateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     useEffect(() => {
         // Hook into console.log to capture logs on screen
@@ -16,7 +28,16 @@ export const Dashboard = () => {
         const originalError = console.error;
 
         console.log = (...args) => {
-            const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+            const msg = args.map(a => {
+                if (typeof a === 'object') {
+                    try {
+                        return JSON.stringify(a);
+                    } catch {
+                        return '[Object]';
+                    }
+                }
+                return String(a);
+            }).join(' ');
             setLogs(prev => [msg, ...prev].slice(0, 10)); // Keep last 10 logs
             originalLog(...args);
         };
@@ -39,14 +60,76 @@ export const Dashboard = () => {
         };
     }, []);
 
+    // Translate final text when it changes
     useEffect(() => {
+        if (targetLanguage === 'en') {
+            setTranslatedText(text);
+            return;
+        }
+
+        if (!text) {
+            setTranslatedText('');
+            return;
+        }
+
+        setIsTranslating(true);
+        translateText(text, targetLanguage, true)
+            .then(translated => {
+                setTranslatedText(translated);
+                setIsTranslating(false);
+            })
+            .catch(() => {
+                setTranslatedText(text);
+                setIsTranslating(false);
+            });
+    }, [text, targetLanguage]);
+
+    // Translate interim text with debouncing
+    useEffect(() => {
+        if (targetLanguage === 'en') {
+            setTranslatedInterim(interimText);
+            return;
+        }
+
+        if (!interimText) {
+            setTranslatedInterim('');
+            return;
+        }
+
+        // Debounce interim translation to avoid too many API calls
+        if (interimTranslateTimeoutRef.current) {
+            clearTimeout(interimTranslateTimeoutRef.current);
+        }
+
+        interimTranslateTimeoutRef.current = setTimeout(() => {
+            translateInterim(interimText, targetLanguage)
+                .then(translated => {
+                    setTranslatedInterim(translated);
+                })
+                .catch(() => {
+                    setTranslatedInterim(interimText);
+                });
+        }, 150); // 150ms debounce for interim
+
+        return () => {
+            if (interimTranslateTimeoutRef.current) {
+                clearTimeout(interimTranslateTimeoutRef.current);
+            }
+        };
+    }, [interimText, targetLanguage]);
+
+    // Send translated text to overlay
+    useEffect(() => {
+        const displayText = translatedText;
+        const displayInterim = translatedInterim;
+
         if (channelRef.current) {
-            sendMessage(channelRef.current, 'TRANSCRIPT', { text, interim: interimText });
+            sendMessage(channelRef.current, 'TRANSCRIPT', { text: displayText, interim: displayInterim });
         }
         if (window.electron) {
-            window.electron.sendTranscript({ text, interim: interimText });
+            window.electron.sendTranscript({ text: displayText, interim: displayInterim });
         }
-    }, [text, interimText]);
+    }, [translatedText, translatedInterim]);
 
     const openPopup = () => {
         if (window.electron) {
@@ -60,13 +143,37 @@ export const Dashboard = () => {
         }
     };
 
-    const toggleListening = () => {
+    const toggleListening = useCallback(() => {
         if (isListening) {
             stopListening();
         } else {
+            // Clear translation context when starting new session
+            clearTranslationContext();
+            setTranslatedText('');
+            setTranslatedInterim('');
             startListening();
         }
+    }, [isListening, startListening, stopListening]);
+
+    const handleLanguageChange = (lang: SupportedLanguage) => {
+        setTargetLanguage(lang);
+        setShowLanguageMenu(false);
+        // Clear context when changing language
+        clearTranslationContext();
+        // Re-translate current text
+        if (text && lang !== 'en') {
+            setIsTranslating(true);
+            translateText(text, lang, false)
+                .then(translated => {
+                    setTranslatedText(translated);
+                    setIsTranslating(false);
+                });
+        } else {
+            setTranslatedText(text);
+        }
     };
+
+    const currentLanguage = LANGUAGES.find(l => l.code === targetLanguage);
 
     return (
         <div className="h-screen bg-black text-white font-mono flex flex-col justify-between p-8 overflow-hidden select-none">
@@ -94,6 +201,34 @@ export const Dashboard = () => {
                 </div>
 
                 <div className="flex items-center gap-4">
+                    {/* Language Selector */}
+                    <div className="relative">
+                        <button
+                            onClick={() => setShowLanguageMenu(!showLanguageMenu)}
+                            className="flex items-center gap-2 px-4 py-2 rounded-full border border-gray-800 text-xs font-bold tracking-widest text-gray-400 hover:text-white hover:border-gray-600 transition-all uppercase"
+                        >
+                            <Globe className="w-4 h-4" />
+                            <span>{currentLanguage?.nativeName}</span>
+                            <ChevronDown className={`w-3 h-3 transition-transform ${showLanguageMenu ? 'rotate-180' : ''}`} />
+                        </button>
+
+                        {showLanguageMenu && (
+                            <div className="absolute top-full right-0 mt-2 bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-2xl z-50 min-w-[160px]">
+                                {LANGUAGES.map(lang => (
+                                    <button
+                                        key={lang.code}
+                                        onClick={() => handleLanguageChange(lang.code)}
+                                        className={`w-full px-4 py-3 text-left text-sm hover:bg-gray-800 transition-colors flex items-center justify-between ${lang.code === targetLanguage ? 'bg-gray-800 text-purple-400' : 'text-gray-300'
+                                            }`}
+                                    >
+                                        <span>{lang.nativeName}</span>
+                                        <span className="text-xs text-gray-600">{lang.name}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
                     <button
                         onClick={openPopup}
                         className="px-6 py-2 rounded-full border border-gray-800 text-xs font-bold tracking-widest text-gray-400 hover:text-white hover:border-gray-600 transition-all uppercase"
@@ -130,6 +265,14 @@ export const Dashboard = () => {
                     </div>
                 )}
 
+                {/* Translation Indicator */}
+                {isTranslating && targetLanguage !== 'en' && (
+                    <div className="absolute top-0 mt-4 px-3 py-1 bg-purple-900/50 border border-purple-500/30 rounded-full flex items-center gap-2 backdrop-blur-sm">
+                        <div className="w-2 h-2 bg-purple-500 rounded-full animate-pulse"></div>
+                        <span className="text-xs text-purple-300">Translating...</span>
+                    </div>
+                )}
+
                 {/* Visualizer - Reacts to Audio Level */}
                 <div className={`flex items-end gap-2 h-16 mb-8 transition-all duration-500 ${isListening ? 'opacity-100 scale-100' : 'opacity-30 scale-90'}`}>
                     <div className="w-2 bg-purple-500 rounded-full transition-all duration-75" style={{ height: `${Math.max(8, audioLevel * 0.5)}px` }}></div>
@@ -141,13 +284,13 @@ export const Dashboard = () => {
 
                 <div className="text-center max-w-3xl px-8">
                     <p className={`text-gray-600 text-sm tracking-[0.2em] uppercase mb-4 transition-opacity ${isListening ? 'opacity-100' : 'opacity-50'}`}>
-                        {error ? 'System Offline' : isListening ? 'Capturing Audio Stream' : 'System Idle'}
+                        {error ? 'System Offline' : isListening ? `Capturing Audio Stream${targetLanguage !== 'en' ? ` → ${currentLanguage?.nativeName}` : ''}` : 'System Idle'}
                     </p>
                     {/* Live Transcript Preview */}
                     <div className="min-h-[60px]">
-                        {(text || interimText) ? (
+                        {(translatedText || translatedInterim) ? (
                             <p className="text-xl md:text-2xl text-gray-300 font-sans leading-relaxed transition-all">
-                                {text} <span className="text-purple-400 opacity-70 border-b border-purple-500/30">{interimText}</span>
+                                {translatedText} <span className="text-purple-400 opacity-70 border-b border-purple-500/30">{translatedInterim}</span>
                             </p>
                         ) : (
                             <p className="text-gray-800 italic font-serif">...</p>
@@ -157,12 +300,22 @@ export const Dashboard = () => {
             </main>
 
             {/* Footer */}
-            <footer className="grid grid-cols-2 text-[10px] text-gray-600 tracking-widest uppercase border-t border-gray-900/50 pt-8">
+            <footer className="grid grid-cols-3 text-[10px] text-gray-600 tracking-widest uppercase border-t border-gray-900/50 pt-8">
                 <div>
                     <h3 className="text-gray-500 mb-2 font-bold">Control</h3>
                     <div className="flex items-center gap-2">
                         <span className="border border-gray-700 px-2 py-1 rounded text-gray-400">ESC</span>
                         <span>Toggle Interface</span>
+                    </div>
+                </div>
+                <div>
+                    <h3 className="text-gray-500 mb-2 font-bold">Language</h3>
+                    <div className="flex items-center gap-2">
+                        <Globe className="w-3 h-3 text-purple-500" />
+                        <span className="text-purple-400">{currentLanguage?.nativeName}</span>
+                        {targetLanguage !== 'en' && (
+                            <span className="text-gray-700 normal-case tracking-normal">• Context-aware translation</span>
+                        )}
                     </div>
                 </div>
                 <div>
@@ -177,11 +330,16 @@ export const Dashboard = () => {
                             <span>Whisper</span>
                         </div>
                     </div>
-                    <div className="mt-1 normal-case text-gray-700 tracking-normal">
-                        Hybrid mode: Vosk (fast) + Whisper (accurate)
-                    </div>
                 </div>
             </footer>
+
+            {/* Click outside to close language menu */}
+            {showLanguageMenu && (
+                <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setShowLanguageMenu(false)}
+                />
+            )}
         </div>
     );
 };
