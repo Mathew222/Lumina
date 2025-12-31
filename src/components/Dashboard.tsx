@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Mic, Globe, ChevronDown } from 'lucide-react';
+import { Mic, Globe, ChevronDown, Settings, Type, Palette } from 'lucide-react';
 import { useHybridSpeechRecognition } from '../hooks/useHybridSpeechRecognition';
 import { BROADCAST_CHANNEL_NAME, sendMessage } from '../utils/broadcast';
 import { translateText, translateInterim, LANGUAGES, clearTranslationContext } from '../utils/translate';
@@ -18,6 +18,30 @@ export const Dashboard = () => {
 
     // Debug Console State
     const [logs, setLogs] = useState<string[]>([]);
+
+    // Text Customization State
+    const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+    const [fontSize, setFontSize] = useState<'sm' | 'md' | 'lg' | 'xl'>('md');
+    const [showBackground, setShowBackground] = useState(false);
+    const [textColor, setTextColor] = useState('#e5e5e5'); // Default gray-300
+
+    // Preset colors for text
+    const TEXT_COLORS = [
+        { name: 'White', value: '#ffffff' },
+        { name: 'Gray', value: '#e5e5e5' },
+        { name: 'Yellow', value: '#fbbf24' },
+        { name: 'Green', value: '#4ade80' },
+        { name: 'Cyan', value: '#22d3ee' },
+        { name: 'Purple', value: '#c084fc' },
+    ];
+
+    // Font size classes
+    const FONT_SIZES = {
+        sm: 'text-lg md:text-xl',
+        md: 'text-xl md:text-2xl',
+        lg: 'text-2xl md:text-3xl',
+        xl: 'text-3xl md:text-4xl',
+    };
 
     // Debounce ref for interim translation
     const interimTranslateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -118,18 +142,27 @@ export const Dashboard = () => {
         };
     }, [interimText, targetLanguage]);
 
-    // Send translated text to overlay
+    // Send translated text and style settings to overlay
     useEffect(() => {
         const displayText = translatedText;
         const displayInterim = translatedInterim;
+        const styleSettings = { fontSize, showBackground, textColor };
 
         if (channelRef.current) {
-            sendMessage(channelRef.current, 'TRANSCRIPT', { text: displayText, interim: displayInterim });
+            sendMessage(channelRef.current, 'TRANSCRIPT', {
+                text: displayText,
+                interim: displayInterim,
+                style: styleSettings
+            });
         }
         if (window.electron) {
-            window.electron.sendTranscript({ text: displayText, interim: displayInterim });
+            window.electron.sendTranscript({
+                text: displayText,
+                interim: displayInterim,
+                style: styleSettings
+            });
         }
-    }, [translatedText, translatedInterim]);
+    }, [translatedText, translatedInterim, fontSize, showBackground, textColor]);
 
     const openPopup = () => {
         if (window.electron) {
@@ -229,6 +262,82 @@ export const Dashboard = () => {
                         )}
                     </div>
 
+                    {/* Text Customization Settings */}
+                    <div className="relative">
+                        <button
+                            onClick={() => setShowSettingsMenu(!showSettingsMenu)}
+                            className="flex items-center gap-2 px-4 py-2 rounded-full border border-gray-800 text-xs font-bold tracking-widest text-gray-400 hover:text-white hover:border-gray-600 transition-all uppercase"
+                        >
+                            <Settings className="w-4 h-4" />
+                            <span>Style</span>
+                        </button>
+
+                        {showSettingsMenu && (
+                            <div className="absolute top-full right-0 mt-2 bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-2xl z-50 w-72 p-4">
+                                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                                    <Type className="w-4 h-4" />
+                                    Text Customization
+                                </h3>
+
+                                {/* Font Size */}
+                                <div className="mb-4">
+                                    <label className="text-xs text-gray-500 block mb-2">Font Size</label>
+                                    <div className="flex gap-2">
+                                        {(['sm', 'md', 'lg', 'xl'] as const).map(size => (
+                                            <button
+                                                key={size}
+                                                onClick={() => setFontSize(size)}
+                                                className={`flex-1 py-2 rounded-lg text-xs font-bold uppercase transition-colors ${fontSize === size
+                                                    ? 'bg-purple-600 text-white'
+                                                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                                                    }`}
+                                            >
+                                                {size}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Background Toggle */}
+                                <div className="mb-4">
+                                    <label className="text-xs text-gray-500 block mb-2">Background</label>
+                                    <button
+                                        onClick={() => setShowBackground(!showBackground)}
+                                        className={`w-full py-2 rounded-lg text-xs font-bold uppercase transition-colors flex items-center justify-center gap-2 ${showBackground
+                                            ? 'bg-purple-600 text-white'
+                                            : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                                            }`}
+                                    >
+                                        <div className={`w-4 h-4 rounded border ${showBackground ? 'bg-black border-white' : 'bg-transparent border-gray-600'}`}></div>
+                                        {showBackground ? 'Background On' : 'Background Off'}
+                                    </button>
+                                </div>
+
+                                {/* Text Color */}
+                                <div>
+                                    <label className="text-xs text-gray-500 block mb-2 flex items-center gap-2">
+                                        <Palette className="w-3 h-3" />
+                                        Text Color
+                                    </label>
+                                    <div className="grid grid-cols-6 gap-2">
+                                        {TEXT_COLORS.map(color => (
+                                            <button
+                                                key={color.value}
+                                                onClick={() => setTextColor(color.value)}
+                                                className={`w-8 h-8 rounded-full border-2 transition-all hover:scale-110 ${textColor === color.value
+                                                    ? 'border-white shadow-[0_0_10px_rgba(255,255,255,0.5)]'
+                                                    : 'border-gray-700'
+                                                    }`}
+                                                style={{ backgroundColor: color.value }}
+                                                title={color.name}
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
                     <button
                         onClick={openPopup}
                         className="px-6 py-2 rounded-full border border-gray-800 text-xs font-bold tracking-widest text-gray-400 hover:text-white hover:border-gray-600 transition-all uppercase"
@@ -287,10 +396,13 @@ export const Dashboard = () => {
                         {error ? 'System Offline' : isListening ? `Capturing Audio Stream${targetLanguage !== 'en' ? ` → ${currentLanguage?.nativeName}` : ''}` : 'System Idle'}
                     </p>
                     {/* Live Transcript Preview */}
-                    <div className="min-h-[60px]">
+                    <div className={`min-h-[60px] px-4 py-2 rounded-xl transition-all ${showBackground ? 'bg-black/80' : ''}`}>
                         {(translatedText || translatedInterim) ? (
-                            <p className="text-xl md:text-2xl text-gray-300 font-sans leading-relaxed transition-all">
-                                {translatedText} <span className="text-purple-400 opacity-70 border-b border-purple-500/30">{translatedInterim}</span>
+                            <p
+                                className={`${FONT_SIZES[fontSize]} font-sans leading-relaxed transition-all`}
+                                style={{ color: textColor }}
+                            >
+                                {translatedText} <span className="opacity-70 border-b border-current">{translatedInterim}</span>
                             </p>
                         ) : (
                             <p className="text-gray-800 italic font-serif">...</p>
@@ -334,10 +446,14 @@ export const Dashboard = () => {
             </footer>
 
             {/* Click outside to close language menu */}
-            {showLanguageMenu && (
+            {/* Click outside to close menus */}
+            {(showLanguageMenu || showSettingsMenu) && (
                 <div
                     className="fixed inset-0 z-40"
-                    onClick={() => setShowLanguageMenu(false)}
+                    onClick={() => {
+                        setShowLanguageMenu(false);
+                        setShowSettingsMenu(false);
+                    }}
                 />
             )}
         </div>
