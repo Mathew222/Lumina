@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Mic } from 'lucide-react';
-import { useVoskRecognition } from '../hooks/useVoskRecognition';
+import { useHybridSpeechRecognition } from '../hooks/useHybridSpeechRecognition';
 import { BROADCAST_CHANNEL_NAME, sendMessage } from '../utils/broadcast';
 
 export const Dashboard = () => {
-    const { text, interimText, isListening, startListening, stopListening, error, audioLevel, isModelLoading, reloadModel } = useVoskRecognition();
+    const { text, interimText, isListening, startListening, stopListening, error, audioLevel, isModelLoading, reloadModel, engineStatus } = useHybridSpeechRecognition();
     const channelRef = useRef<BroadcastChannel | null>(null);
 
     // Debug Console State
@@ -167,12 +167,18 @@ export const Dashboard = () => {
                 </div>
                 <div>
                     <h3 className="text-gray-500 mb-2 font-bold">Core</h3>
-                    <div className="flex items-center gap-2">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.8)]"></span>
-                        <span>Vosk (Low Latency)</span>
+                    <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-2">
+                            <span className={`w-1.5 h-1.5 rounded-full ${engineStatus.vosk === 'ready' ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.8)]' : engineStatus.vosk === 'loading' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'}`}></span>
+                            <span>Vosk</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className={`w-1.5 h-1.5 rounded-full ${engineStatus.whisper === 'ready' ? 'bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.8)]' : engineStatus.whisper === 'loading' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'}`}></span>
+                            <span>Whisper</span>
+                        </div>
                     </div>
                     <div className="mt-1 normal-case text-gray-700 tracking-normal">
-                        Running offline inference.
+                        Hybrid mode: Vosk (fast) + Whisper (accurate)
                     </div>
                 </div>
             </footer>

@@ -3,10 +3,16 @@ import { pipeline, env } from '@xenova/transformers';
 
 /**
  * OFFLINE CONFIGURATION
+ * Configure transformers.js to use local models only
  */
-env.allowLocalModels = true; // Enable local files (required for local_files_only: true)
+env.allowLocalModels = true;
 env.useBrowserCache = false;
 env.backends.onnx.wasm.wasmPaths = '/'; // WASM files are in root public/
+
+// For local model loading, we need to set the local path and enable local models
+// Don't use remoteHost as it causes path duplication issues
+env.localModelPath = '/models/';  // Base path for local models
+env.allowRemoteModels = false;    // Disable remote fetching entirely
 
 let transcriber = null;
 
@@ -65,14 +71,14 @@ const init = async () => {
         console.log('[Worker] self.location.origin:', self.location.origin);
         console.log('[Worker] self.location.href:', self.location.href);
 
-        // Use the full URL path to the model in public/models
-        const P_MODEL_PATH = self.location.origin + '/models/whisper-base.en';
+        // Use just the model name since localModelPath is set to /models/
+        const P_MODEL_PATH = 'whisper-base.en';
 
         console.log(`[Worker] Attempting to load model from: ${P_MODEL_PATH}`);
         self.postMessage({ type: 'debug', message: `Model path: ${P_MODEL_PATH}` });
 
         transcriber = await pipeline('automatic-speech-recognition', P_MODEL_PATH, {
-            local_files_only: false,
+            local_files_only: true,  // Only use local files from localModelPath
         });
 
         console.log('[Worker] Model loaded successfully');
@@ -106,20 +112,19 @@ self.onmessage = async (event) => {
             const durationSeconds = audio.length / 16000;
             const chunkLength = Math.max(0.5, Math.min(30, Math.ceil(durationSeconds))); // Match actual duration
 
-            // Maximum speed settings for live transcription
+            // Accuracy-optimized settings for refinement (not real-time)
             const output = await transcriber(audio, {
                 language: 'english',
                 task: 'transcribe',
-                chunk_length_s: chunkLength,
+                chunk_length_s: 30,           // Longer chunks for better context
                 return_timestamps: false,
-                // Maximum speed settings - prioritize speed over accuracy
-                temperature: 0.0,
-                // Minimal processing for maximum speed
-                beam_size: 1,      // Single beam for fastest processing
-                best_of: 1,        // Single candidate
-                // Very permissive thresholds to catch all speech quickly
-                no_speech_threshold: 0.2,  // Very low to catch more speech
-                logprob_threshold: -1.5,   // Very permissive
+                // Accuracy-focused settings
+                temperature: 0.0,             // Deterministic output
+                beam_size: 5,                 // More beams = better accuracy
+                best_of: 3,                   // Multiple candidates
+                // Standard thresholds for quality
+                no_speech_threshold: 0.6,     // Standard threshold
+                logprob_threshold: -1.0,      // Standard threshold
             });
 
             const end = performance.now();
