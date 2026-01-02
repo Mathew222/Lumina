@@ -1,9 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Mic, Globe, ChevronDown, Settings, Type, Palette } from 'lucide-react';
+import { Mic, Globe, ChevronDown, Settings, Type, Palette, Circle, Square, History, Key, Sparkles, X } from 'lucide-react';
 import { useHybridSpeechRecognition } from '../hooks/useHybridSpeechRecognition';
 import { BROADCAST_CHANNEL_NAME, sendMessage } from '../utils/broadcast';
 import { translateText, translateInterim, LANGUAGES, clearTranslationContext } from '../utils/translate';
 import type { SupportedLanguage } from '../utils/translate';
+import type { Session, Summary } from '../types/session';
+import { summarizeConversation, getStoredApiKey, setStoredApiKey } from '../utils/gemini';
+import { saveSession, generateSessionId } from '../utils/sessionStorage';
+import { SummaryPanel } from './SummaryPanel';
+import { SessionHistory } from './SessionHistory';
 
 export const Dashboard = () => {
     const { text, interimText, isListening, startListening, stopListening, error, audioLevel, isModelLoading, reloadModel, engineStatus } = useHybridSpeechRecognition();
@@ -25,6 +30,26 @@ export const Dashboard = () => {
     const [showBackground, setShowBackground] = useState(false);
     const [textColor, setTextColor] = useState('#e5e5e5'); // Default gray-300
 
+    // Session Recording State
+    const [isRecording, setIsRecording] = useState(false);
+    const [recordingStartTime, setRecordingStartTime] = useState<number | null>(null);
+    const [recordingDuration, setRecordingDuration] = useState(0);
+    const transcriptBufferRef = useRef<string[]>([]);
+
+    // Summary Panel State
+    const [showSummaryPanel, setShowSummaryPanel] = useState(false);
+    const [currentSummary, setCurrentSummary] = useState<Summary | null>(null);
+    const [isSummarizing, setIsSummarizing] = useState(false);
+    const [summaryError, setSummaryError] = useState<string | null>(null);
+
+    // Session History State
+    const [showSessionHistory, setShowSessionHistory] = useState(false);
+    const [selectedSession, setSelectedSession] = useState<Session | null>(null);
+
+    // API Key State
+    const [geminiApiKey, setGeminiApiKey] = useState(() => getStoredApiKey());
+    const [showApiKeyInput, setShowApiKeyInput] = useState(false);
+
     // Preset colors for text
     const TEXT_COLORS = [
         { name: 'White', value: '#ffffff' },
@@ -45,6 +70,30 @@ export const Dashboard = () => {
 
     // Debounce ref for interim translation
     const interimTranslateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // Update recording duration timer
+    useEffect(() => {
+        let interval: ReturnType<typeof setInterval> | null = null;
+        if (isRecording && recordingStartTime) {
+            interval = setInterval(() => {
+                setRecordingDuration(Math.floor((Date.now() - recordingStartTime) / 1000));
+            }, 1000);
+        }
+        return () => {
+            if (interval) clearInterval(interval);
+        };
+    }, [isRecording, recordingStartTime]);
+
+    // Capture transcript while recording
+    useEffect(() => {
+        if (isRecording && text) {
+            // Add new text to buffer if it's different from the last entry
+            const lastEntry = transcriptBufferRef.current[transcriptBufferRef.current.length - 1];
+            if (text !== lastEntry) {
+                transcriptBufferRef.current.push(text);
+            }
+        }
+    }, [text, isRecording]);
 
     useEffect(() => {
         // Hook into console.log to capture logs on screen
@@ -133,7 +182,7 @@ export const Dashboard = () => {
                 .catch(() => {
                     setTranslatedInterim(interimText);
                 });
-        }, 150); // 150ms debounce for interim
+        }, 75); // 75ms debounce for faster interim translation
 
         return () => {
             if (interimTranslateTimeoutRef.current) {
@@ -206,6 +255,91 @@ export const Dashboard = () => {
         }
     };
 
+    // Session Recording Functions
+    const startRecording = useCallback(() => {
+        transcriptBufferRef.current = [];
+        setRecordingStartTime(Date.now());
+        setRecordingDuration(0);
+        setIsRecording(true);
+        setCurrentSummary(null);
+        setSummaryError(null);
+
+        // Also start listening if not already
+        if (!isListening) {
+            clearTranslationContext();
+            setTranslatedText('');
+            setTranslatedInterim('');
+            startListening();
+        }
+    }, [isListening, startListening]);
+
+    const stopRecording = useCallback(async () => {
+        setIsRecording(false);
+        const endTime = Date.now();
+        const startTime = recordingStartTime || endTime;
+        const duration = Math.floor((endTime - startTime) / 1000);
+
+        // Collect all transcript text
+        const fullTranscript = transcriptBufferRef.current.join(' ').trim();
+
+        if (!fullTranscript) {
+            setSummaryError('No transcript captured during recording.');
+            return;
+        }
+
+        // Create session object
+        const session: Session = {
+            id: generateSessionId(),
+            startedAt: new Date(startTime).toISOString(),
+            endedAt: new Date(endTime).toISOString(),
+            transcript: fullTranscript,
+            summary: null,
+            language: targetLanguage,
+            duration
+        };
+
+        // Save session first (without summary)
+        saveSession(session);
+
+        // Show summary panel with loading state
+        setShowSummaryPanel(true);
+        setIsSummarizing(true);
+        setSummaryError(null);
+
+        // Get summary from Gemini
+        const result = await summarizeConversation(fullTranscript, geminiApiKey);
+
+        if (result.success) {
+            setCurrentSummary(result.summary);
+            // Update session with summary
+            session.summary = result.summary;
+            saveSession(session);
+        } else {
+            setSummaryError(result.error.message);
+        }
+
+        setIsSummarizing(false);
+    }, [recordingStartTime, geminiApiKey, targetLanguage]);
+
+    const handleSaveApiKey = (key: string) => {
+        setGeminiApiKey(key);
+        setStoredApiKey(key);
+        setShowApiKeyInput(false);
+    };
+
+    const handleSelectSession = (session: Session) => {
+        setSelectedSession(session);
+        setCurrentSummary(session.summary);
+        setShowSessionHistory(false);
+        setShowSummaryPanel(true);
+    };
+
+    const formatRecordingTime = (seconds: number) => {
+        const mins = Math.floor(seconds / 60);
+        const secs = seconds % 60;
+        return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    };
+
     const currentLanguage = LANGUAGES.find(l => l.code === targetLanguage);
 
     return (
@@ -229,11 +363,49 @@ export const Dashboard = () => {
                                 {isListening ? 'LISTENING' : 'IDLE'}
                                 {isListening && <span className="text-gray-600 ml-2">VOL: {audioLevel}</span>}
                             </span>
+                            {/* Recording Indicator */}
+                            {isRecording && (
+                                <span className="flex items-center gap-1 ml-2 text-red-400">
+                                    <Circle className="w-2 h-2 fill-red-500 animate-pulse" />
+                                    <span className="text-xs font-mono">{formatRecordingTime(recordingDuration)}</span>
+                                </span>
+                            )}
                         </div>
                     </div>
                 </div>
 
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-3">
+                    {/* Session History Button */}
+                    <button
+                        onClick={() => setShowSessionHistory(true)}
+                        className="flex items-center gap-2 px-4 py-2 rounded-full border border-gray-800 text-xs font-bold tracking-widest text-gray-400 hover:text-white hover:border-gray-600 transition-all uppercase"
+                    >
+                        <History className="w-4 h-4" />
+                        <span>History</span>
+                    </button>
+
+                    {/* Record Session Button */}
+                    <button
+                        onClick={isRecording ? stopRecording : startRecording}
+                        disabled={isModelLoading}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold tracking-widest transition-all uppercase ${isRecording
+                                ? 'bg-red-500/20 border border-red-500/50 text-red-400 hover:bg-red-500/30'
+                                : 'border border-purple-500/50 text-purple-400 hover:bg-purple-500/20'
+                            }`}
+                    >
+                        {isRecording ? (
+                            <>
+                                <Square className="w-3 h-3 fill-red-400" />
+                                <span>Stop</span>
+                            </>
+                        ) : (
+                            <>
+                                <Circle className="w-3 h-3 fill-purple-400" />
+                                <span>Record</span>
+                            </>
+                        )}
+                    </button>
+
                     {/* Language Selector */}
                     <div className="relative">
                         <button
@@ -314,7 +486,7 @@ export const Dashboard = () => {
                                 </div>
 
                                 {/* Text Color */}
-                                <div>
+                                <div className="mb-4">
                                     <label className="text-xs text-gray-500 block mb-2 flex items-center gap-2">
                                         <Palette className="w-3 h-3" />
                                         Text Color
@@ -333,6 +505,46 @@ export const Dashboard = () => {
                                             />
                                         ))}
                                     </div>
+                                </div>
+
+                                {/* Gemini API Key */}
+                                <div className="pt-3 border-t border-gray-800">
+                                    <label className="text-xs text-gray-500 block mb-2 flex items-center gap-2">
+                                        <Key className="w-3 h-3" />
+                                        Gemini API Key
+                                    </label>
+                                    {showApiKeyInput ? (
+                                        <div className="flex gap-2">
+                                            <input
+                                                type="password"
+                                                defaultValue={geminiApiKey}
+                                                placeholder="Enter API key..."
+                                                className="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-xs text-white placeholder-gray-500 focus:outline-none focus:border-purple-500"
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') {
+                                                        handleSaveApiKey((e.target as HTMLInputElement).value);
+                                                    }
+                                                }}
+                                            />
+                                            <button
+                                                onClick={() => setShowApiKeyInput(false)}
+                                                className="p-2 bg-gray-800 rounded-lg hover:bg-gray-700"
+                                            >
+                                                <X className="w-4 h-4 text-gray-400" />
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <button
+                                            onClick={() => setShowApiKeyInput(true)}
+                                            className={`w-full py-2 rounded-lg text-xs font-bold uppercase transition-colors flex items-center justify-center gap-2 ${geminiApiKey
+                                                    ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                                                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                                                }`}
+                                        >
+                                            <Sparkles className="w-3 h-3" />
+                                            {geminiApiKey ? 'API Key Set' : 'Add API Key'}
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                         )}
@@ -441,11 +653,16 @@ export const Dashboard = () => {
                             <span className={`w-1.5 h-1.5 rounded-full ${engineStatus.whisper === 'ready' ? 'bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.8)]' : engineStatus.whisper === 'loading' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'}`}></span>
                             <span>Whisper</span>
                         </div>
+                        {geminiApiKey && (
+                            <div className="flex items-center gap-2">
+                                <span className="w-1.5 h-1.5 rounded-full bg-purple-500 shadow-[0_0_10px_rgba(168,85,247,0.8)]"></span>
+                                <span>Gemini</span>
+                            </div>
+                        )}
                     </div>
                 </div>
             </footer>
 
-            {/* Click outside to close language menu */}
             {/* Click outside to close menus */}
             {(showLanguageMenu || showSettingsMenu) && (
                 <div
@@ -456,6 +673,26 @@ export const Dashboard = () => {
                     }}
                 />
             )}
+
+            {/* Summary Panel */}
+            {showSummaryPanel && (
+                <SummaryPanel
+                    summary={currentSummary}
+                    isLoading={isSummarizing}
+                    error={summaryError}
+                    onClose={() => {
+                        setShowSummaryPanel(false);
+                        setSelectedSession(null);
+                    }}
+                />
+            )}
+
+            {/* Session History Modal */}
+            <SessionHistory
+                isOpen={showSessionHistory}
+                onClose={() => setShowSessionHistory(false)}
+                onSelectSession={handleSelectSession}
+            />
         </div>
     );
 };

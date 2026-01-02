@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lumina - Project Documentation</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            line-height: 1.7;
+            color: #1a1a2e;
+            background: #ffffff;
+            font-size: 11pt;
+        }
+        
+        .page {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 50px;
+        }
+        
+        /* Cover Page */
+        .cover {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            color: white;
+            page-break-after: always;
+            padding: 60px;
+        }
+        
+        .cover-logo {
+            font-size: 72px;
+            font-weight: 700;
+            letter-spacing: 12px;
+            margin-bottom: 20px;
+            background: linear-gradient(135deg, #a855f7 0%, #6366f1 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .cover-subtitle {
+            font-size: 18px;
+            font-weight: 300;
+            letter-spacing: 4px;
+            color: #94a3b8;
+            margin-bottom: 60px;
+        }
+        
+        .cover-tagline {
+            font-size: 24px;
+            font-weight: 500;
+            color: #e2e8f0;
+            max-width: 500px;
+            margin-bottom: 100px;
+        }
+        
+        .cover-meta {
+            font-size: 12px;
+            color: #64748b;
+            letter-spacing: 2px;
+        }
+        
+        .cover-meta p {
+            margin: 8px 0;
+        }
+        
+        /* Headers */
+        h1 {
+            font-size: 28px;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-bottom: 30px;
+            padding-bottom: 15px;
+            border-bottom: 3px solid #a855f7;
+        }
+        
+        h2 {
+            font-size: 20px;
+            font-weight: 600;
+            color: #16213e;
+            margin-top: 35px;
+            margin-bottom: 18px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        h2::before {
+            content: '';
+            width: 4px;
+            height: 24px;
+            background: linear-gradient(135deg, #a855f7 0%, #6366f1 100%);
+            border-radius: 2px;
+        }
+        
+        h3 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #334155;
+            margin-top: 25px;
+            margin-bottom: 12px;
+        }
+        
+        /* Paragraphs and text */
+        p {
+            margin-bottom: 15px;
+            text-align: justify;
+        }
+        
+        /* Lists */
+        ul, ol {
+            margin-left: 25px;
+            margin-bottom: 18px;
+        }
+        
+        li {
+            margin-bottom: 8px;
+        }
+        
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 25px 0;
+            font-size: 10pt;
+        }
+        
+        th {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: white;
+            padding: 14px 18px;
+            text-align: left;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+        
+        td {
+            padding: 12px 18px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        tr:nth-child(even) {
+            background: #f8fafc;
+        }
+        
+        /* Code blocks */
+        code {
+            font-family: 'Monaco', 'Consolas', monospace;
+            background: #f1f5f9;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 10pt;
+            color: #7c3aed;
+        }
+        
+        pre {
+            background: #1a1a2e;
+            color: #e2e8f0;
+            padding: 20px;
+            border-radius: 10px;
+            overflow-x: auto;
+            margin: 20px 0;
+            font-size: 10pt;
+            line-height: 1.6;
+        }
+        
+        pre code {
+            background: transparent;
+            color: inherit;
+            padding: 0;
+        }
+        
+        /* Boxes */
+        .info-box {
+            background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+            border-left: 4px solid #0ea5e9;
+            padding: 18px 22px;
+            margin: 22px 0;
+            border-radius: 0 8px 8px 0;
+        }
+        
+        .feature-box {
+            background: linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%);
+            border-left: 4px solid #a855f7;
+            padding: 18px 22px;
+            margin: 22px 0;
+            border-radius: 0 8px 8px 0;
+        }
+        
+        /* Diagrams */
+        .diagram {
+            background: #f8fafc;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 30px;
+            margin: 30px 0;
+            text-align: center;
+        }
+        
+        .diagram-title {
+            font-weight: 600;
+            color: #475569;
+            margin-bottom: 25px;
+            font-size: 14px;
+            letter-spacing: 1px;
+        }
+        
+        .flow-diagram {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        
+        .flow-box {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: white;
+            padding: 15px 22px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 500;
+            min-width: 130px;
+            text-align: center;
+        }
+        
+        .flow-box.highlight {
+            background: linear-gradient(135deg, #a855f7 0%, #6366f1 100%);
+        }
+        
+        .flow-arrow {
+            color: #64748b;
+            font-size: 24px;
+            font-weight: 300;
+        }
+        
+        /* Architecture diagram */
+        .arch-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 20px;
+            margin: 25px 0;
+        }
+        
+        .arch-layer {
+            background: #f8fafc;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 20px;
+        }
+        
+        .arch-layer-title {
+            font-weight: 600;
+            color: #a855f7;
+            margin-bottom: 15px;
+            text-align: center;
+            font-size: 13px;
+        }
+        
+        .arch-item {
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 10px 14px;
+            margin: 8px 0;
+            font-size: 10px;
+            text-align: center;
+        }
+        
+        /* Page breaks */
+        .page-break {
+            page-break-before: always;
+        }
+        
+        /* Footer */
+        .section-divider {
+            border: 0;
+            height: 1px;
+            background: linear-gradient(to right, transparent, #e2e8f0, transparent);
+            margin: 40px 0;
+        }
+        
+        /* Tech stack grid */
+        .tech-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 18px;
+            margin: 25px 0;
+        }
+        
+        .tech-card {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 18px;
+        }
+        
+        .tech-card-title {
+            font-weight: 600;
+            color: #1a1a2e;
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+        
+        .tech-card-desc {
+            font-size: 10pt;
+            color: #64748b;
+        }
+        
+        /* Print styles */
+        @media print {
+            body {
+                font-size: 10pt;
+            }
+            
+            .page {
+                padding: 30px 40px;
+            }
+            
+            .cover {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            
+            .page-break {
+                page-break-before: always;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Cover Page -->
+    <div class="cover">
+        <div class="cover-logo">LUMINA</div>
+        <div class="cover-subtitle">TECHNICAL DOCUMENTATION</div>
+        <div class="cover-tagline">Real-Time Subtitle Generation with AI-Powered Speech Recognition & Live Translation</div>
+        <div class="cover-meta">
+            <p>VERSION 1.0.0</p>
+            <p>DECEMBER 2024</p>
+            <p>ELECTRON • REACT • WHISPER AI • VOSK</p>
+        </div>
+    </div>
+
+    <!-- Table of Contents -->
+    <div class="page">
+        <h1>Table of Contents</h1>
+        <ol style="font-size: 13px; line-height: 2.2;">
+            <li><strong>Executive Summary</strong></li>
+            <li><strong>System Overview</strong>
+                <ul>
+                    <li>2.1 Introduction</li>
+                    <li>2.2 Key Features</li>
+                    <li>2.3 Use Cases</li>
+                </ul>
+            </li>
+            <li><strong>Technology Stack</strong>
+                <ul>
+                    <li>3.1 Frontend Technologies</li>
+                    <li>3.2 Desktop Framework</li>
+                    <li>3.3 Speech Recognition Engines</li>
+                    <li>3.4 Translation Service</li>
+                </ul>
+            </li>
+            <li><strong>System Architecture</strong>
+                <ul>
+                    <li>4.1 High-Level Architecture</li>
+                    <li>4.2 Component Diagram</li>
+                    <li>4.3 Data Flow</li>
+                </ul>
+            </li>
+            <li><strong>Core Components</strong>
+                <ul>
+                    <li>5.1 Electron Main Process</li>
+                    <li>5.2 React Frontend</li>
+                    <li>5.3 Speech Recognition Module</li>
+                    <li>5.4 Translation Engine</li>
+                </ul>
+            </li>
+            <li><strong>Working Mechanism</strong></li>
+            <li><strong>Project Structure</strong></li>
+            <li><strong>Installation & Setup</strong></li>
+            <li><strong>Future Enhancements</strong></li>
+        </ol>
+    </div>
+
+    <!-- Executive Summary -->
+    <div class="page page-break">
+        <h1>1. Executive Summary</h1>
+        
+        <p><strong>Lumina</strong> is a cutting-edge desktop application designed to provide real-time subtitle generation and live translation capabilities. Built with modern web technologies and powered by state-of-the-art AI models, Lumina captures system audio and converts spoken words into visual subtitles instantaneously.</p>
+        
+        <div class="feature-box">
+            <strong>Core Value Proposition:</strong> Lumina bridges the gap between audio content and visual accessibility by providing instant, accurate subtitles with optional real-time translation support.
+        </div>
+        
+        <h2>Key Highlights</h2>
+        <ul>
+            <li><strong>Dual Speech Recognition:</strong> Hybrid system using both Vosk (fast) and Whisper (accurate) engines</li>
+            <li><strong>Real-Time Processing:</strong> Sub-second latency for live subtitle display</li>
+            <li><strong>Desktop Overlay:</strong> Always-on-top transparent subtitle window</li>
+            <li><strong>Customizable Display:</strong> Adjustable font size, colors, and background</li>
+            <li><strong>Translation Support:</strong> Context-aware translation with caching</li>
+        </ul>
+        
+        <h2>Target Applications</h2>
+        <ul>
+            <li>Video conferencing and online meetings</li>
+            <li>Educational content consumption</li>
+            <li>Accessibility for hearing-impaired users</li>
+            <li>Multi-language content understanding</li>
+            <li>Live streaming and content creation</li>
+        </ul>
+    </div>
+
+    <!-- System Overview -->
+    <div class="page page-break">
+        <h1>2. System Overview</h1>
+        
+        <h2>2.1 Introduction</h2>
+        <p>Lumina is a sophisticated real-time captioning system that leverages advanced speech recognition models to transcribe audio streams into readable text. The application runs as a desktop application using Electron, providing native-level performance while utilizing web technologies for the user interface.</p>
+        
+        <h2>2.2 Key Features</h2>
+        
+        <table>
+            <tr>
+                <th>Feature</th>
+                <th>Description</th>
+            </tr>
+            <tr>
+                <td><strong>🎙️ Real-Time Transcription</strong></td>
+                <td>Captures and transcribes audio in real-time using hybrid speech recognition</td>
+            </tr>
+            <tr>
+                <td><strong>📝 Live Subtitle Display</strong></td>
+                <td>Displays subtitles in a customizable overlay window that stays on top</td>
+            </tr>
+            <tr>
+                <td><strong>🎨 Text Customization</strong></td>
+                <td>Adjust font size (SM/MD/LG/XL), text color, and background visibility</td>
+            </tr>
+            <tr>
+                <td><strong>🌐 Translation Support</strong></td>
+                <td>Real-time translation with context-aware processing and caching</td>
+            </tr>
+            <tr>
+                <td><strong>⚡ Hybrid Engine</strong></td>
+                <td>Combines Vosk (speed) and Whisper (accuracy) for optimal results</td>
+            </tr>
+            <tr>
+                <td><strong>📊 Audio Visualization</strong></td>
+                <td>Real-time audio level indicator and visualizer</td>
+            </tr>
+        </table>
+        
+        <h2>2.3 Use Cases</h2>
+        
+        <div class="info-box">
+            <strong>Scenario 1 - Online Meeting:</strong> User enables Lumina during a Zoom call. The app captures system audio and displays real-time subtitles, helping users who prefer reading or have hearing difficulties.
+        </div>
+        
+        <div class="info-box">
+            <strong>Scenario 2 - Language Learning:</strong> A student watches an English lecture while Lumina translates subtitles to their native language (Malayalam) in real-time.
+        </div>
+        
+        <div class="info-box">
+            <strong>Scenario 3 - Content Creation:</strong> A content creator uses Lumina to generate live captions for their streaming content.
+        </div>
+    </div>
+
+    <!-- Technology Stack -->
+    <div class="page page-break">
+        <h1>3. Technology Stack</h1>
+        
+        <div class="tech-grid">
+            <div class="tech-card">
+                <div class="tech-card-title">⚛️ React 19</div>
+                <div class="tech-card-desc">Modern UI library with hooks for state management and component architecture</div>
+            </div>
+            <div class="tech-card">
+                <div class="tech-card-title">📘 TypeScript</div>
+                <div class="tech-card-desc">Type-safe JavaScript for robust code quality and better developer experience</div>
+            </div>
+            <div class="tech-card">
+                <div class="tech-card-title">⚡ Vite</div>
+                <div class="tech-card-desc">Next-generation frontend build tool with blazing fast HMR and optimized builds</div>
+            </div>
+            <div class="tech-card">
+                <div class="tech-card-title">🖥️ Electron 33</div>
+                <div class="tech-card-desc">Cross-platform desktop framework enabling native capabilities</div>
+            </div>
+            <div class="tech-card">
+                <div class="tech-card-title">🎨 TailwindCSS</div>
+                <div class="tech-card-desc">Utility-first CSS framework for rapid, consistent UI development</div>
+            </div>
+            <div class="tech-card">
+                <div class="tech-card-title">🎤 Whisper (Transformers.js)</div>
+                <div class="tech-card-desc">OpenAI's Whisper model for high-accuracy speech recognition</div>
+            </div>
+            <div class="tech-card">
+                <div class="tech-card-title">🔊 Vosk</div>
+                <div class="tech-card-desc">Lightweight offline speech recognition for fast interim results</div>
+            </div>
+            <div class="tech-card">
+                <div class="tech-card-title">🌐 Google Translate API</div>
+                <div class="tech-card-desc">Real-time translation service with context-aware caching</div>
+            </div>
+        </div>
+        
+        <h2>3.1 Frontend Technologies</h2>
+        <p>The frontend is built using <strong>React 19</strong> with <strong>TypeScript</strong> for type safety. The build process is handled by <strong>Vite</strong>, which provides extremely fast development experience with Hot Module Replacement (HMR). UI styling is managed using <strong>TailwindCSS</strong>, enabling rapid development of responsive, polished interfaces.</p>
+        
+        <h2>3.2 Desktop Framework</h2>
+        <p><strong>Electron</strong> powers the desktop application, enabling access to system-level features like audio capture, transparent windows, and always-on-top overlay functionality. The main process manages window creation and IPC communication, while the renderer process handles the React UI.</p>
+        
+        <h2>3.3 Speech Recognition Engines</h2>
+        <p>Lumina employs a <strong>hybrid speech recognition architecture</strong>:</p>
+        <ul>
+            <li><strong>Vosk:</strong> Provides fast, lightweight recognition for immediate interim results</li>
+            <li><strong>Whisper:</strong> OpenAI's model via Transformers.js for high-accuracy final transcription</li>
+        </ul>
+        
+        <h2>3.4 Translation Service</h2>
+        <p>Translation is handled via <strong>Google Translate API</strong> with intelligent caching, context-aware processing, and debouncing to minimize API calls while maintaining responsiveness.</p>
+    </div>
+
+    <!-- System Architecture -->
+    <div class="page page-break">
+        <h1>4. System Architecture</h1>
+        
+        <h2>4.1 High-Level Architecture</h2>
+        
+        <div class="diagram">
+            <div class="diagram-title">LUMINA SYSTEM ARCHITECTURE</div>
+            <div class="arch-container">
+                <div class="arch-layer">
+                    <div class="arch-layer-title">🖥️ PRESENTATION LAYER</div>
+                    <div class="arch-item">Dashboard Component</div>
+                    <div class="arch-item">Subtitle Popup Overlay</div>
+                    <div class="arch-item">Settings Panel</div>
+                    <div class="arch-item">Audio Visualizer</div>
+                </div>
+                <div class="arch-layer">
+                    <div class="arch-layer-title">⚙️ APPLICATION LAYER</div>
+                    <div class="arch-item">Hybrid Recognition Hook</div>
+                    <div class="arch-item">Translation Utility</div>
+                    <div class="arch-item">Broadcast Channel</div>
+                    <div class="arch-item">Electron IPC</div>
+                </div>
+                <div class="arch-layer">
+                    <div class="arch-layer-title">🤖 AI/ML LAYER</div>
+                    <div class="arch-item">Whisper Worker (ONNX)</div>
+                    <div class="arch-item">Vosk Recognition</div>
+                    <div class="arch-item">Audio Processor</div>
+                    <div class="arch-item">Google Translate API</div>
+                </div>
+            </div>
+        </div>
+        
+        <h2>4.2 Component Interaction</h2>
+        
+        <div class="diagram">
+            <div class="diagram-title">DATA FLOW DIAGRAM</div>
+            <div class="flow-diagram">
+                <div class="flow-box">🎤 System Audio</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-box">Audio Capture</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-box highlight">Hybrid Recognition</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-box">Translation</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-box">📺 Display</div>
+            </div>
+        </div>
+        
+        <h2>4.3 Process Communication</h2>
+        
+        <table>
+            <tr>
+                <th>Communication Channel</th>
+                <th>Purpose</th>
+                <th>Direction</th>
+            </tr>
+            <tr>
+                <td><code>BroadcastChannel</code></td>
+                <td>Dashboard ↔ Popup communication for transcript sync</td>
+                <td>Bidirectional</td>
+            </tr>
+            <tr>
+                <td><code>Electron IPC</code></td>
+                <td>Main ↔ Renderer process communication</td>
+                <td>Bidirectional</td>
+            </tr>
+            <tr>
+                <td><code>Web Worker</code></td>
+                <td>Main thread → Whisper model (offload heavy computation)</td>
+                <td>Async Messages</td>
+            </tr>
+        </table>
+    </div>
+
+    <!-- Core Components -->
+    <div class="page page-break">
+        <h1>5. Core Components</h1>
+        
+        <h2>5.1 Electron Main Process</h2>
+        <p>The Electron main process (<code>electron/main.ts</code>) handles:</p>
+        <ul>
+            <li><strong>Window Management:</strong> Creates main window (900×700) and overlay window (fullwidth×200)</li>
+            <li><strong>Overlay Configuration:</strong> Transparent, always-on-top, click-through subtitle window</li>
+            <li><strong>Screen Capture Permissions:</strong> Enables media capture for system audio</li>
+            <li><strong>IPC Handlers:</strong> Toggle overlay, send transcript, get audio sources</li>
+        </ul>
+        
+        <pre><code>// Overlay Window Configuration
+overlayWindow = new BrowserWindow({
+    width: screenWidth,
+    height: 200,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    focusable: false
+});</code></pre>
+        
+        <h2>5.2 React Frontend Components</h2>
+        
+        <h3>Dashboard Component</h3>
+        <p>The main control interface (<code>src/components/Dashboard.tsx</code>) provides:</p>
+        <ul>
+            <li>Start/Stop audio capture controls</li>
+            <li>Language selection dropdown (English, Malayalam)</li>
+            <li>Text customization settings (font size, color, background)</li>
+            <li>Real-time audio level visualization</li>
+            <li>Debug console for development</li>
+        </ul>
+        
+        <h3>SubtitlePopup Component</h3>
+        <p>The overlay component (<code>src/components/SubtitlePopup.tsx</code>) displays:</p>
+        <ul>
+            <li>Final transcribed text with full styling</li>
+            <li>Interim (in-progress) text with italics and pulse effect</li>
+            <li>Dynamic styling based on dashboard settings</li>
+        </ul>
+        
+        <h2>5.3 Speech Recognition Module</h2>
+        
+        <div class="feature-box">
+            <strong>Hybrid Architecture:</strong> The system uses a dual-engine approach where Vosk provides fast interim results while Whisper delivers high-accuracy final transcriptions.
+        </div>
+        
+        <p>The <code>useHybridSpeechRecognition</code> hook manages:</p>
+        <ul>
+            <li>Audio stream capture from system sources</li>
+            <li>Audio level monitoring and visualization</li>
+            <li>Voice Activity Detection (VAD) for smart processing</li>
+            <li>Coordination between Vosk (speed) and Whisper (accuracy)</li>
+        </ul>
+        
+        <h2>5.4 Whisper Worker</h2>
+        <p>The Web Worker (<code>src/workers/whisper.worker.js</code>) runs Whisper inference:</p>
+        <ul>
+            <li>Uses Transformers.js with ONNX runtime</li>
+            <li>Loads quantized Whisper Base English model (~40MB)</li>
+            <li>Processes audio chunks with beam search (beam_size: 5)</li>
+            <li>Runs entirely offline after initial model download</li>
+        </ul>
+    </div>
+
+    <!-- Working Mechanism -->
+    <div class="page page-break">
+        <h1>6. Working Mechanism</h1>
+        
+        <h2>Step-by-Step Process Flow</h2>
+        
+        <div class="diagram">
+            <div class="diagram-title">SUBTITLE GENERATION PIPELINE</div>
+            <div style="text-align: left; max-width: 600px; margin: 0 auto;">
+                <p><strong>Step 1: Audio Capture</strong></p>
+                <p style="color: #64748b; margin-bottom: 20px;">User clicks "Launch Feed" → System audio is captured via Electron's desktopCapturer API → Audio stream is connected to an AudioContext with an AnalyserNode for level monitoring.</p>
+                
+                <p><strong>Step 2: Voice Activity Detection</strong></p>
+                <p style="color: #64748b; margin-bottom: 20px;">Audio buffer is continuously analyzed → When audio level exceeds threshold, speech is detected → Audio samples are accumulated until speech ends → Accumulated buffer is sent for processing.</p>
+                
+                <p><strong>Step 3: Hybrid Recognition</strong></p>
+                <p style="color: #64748b; margin-bottom: 20px;">Vosk provides immediate interim results (low latency) → Whisper processes accumulated audio for final transcription (high accuracy) → Results are merged with Whisper taking precedence for completed segments.</p>
+                
+                <p><strong>Step 4: Translation (Optional)</strong></p>
+                <p style="color: #64748b; margin-bottom: 20px;">If target language ≠ English → Text is translated via Google Translate API → Context from previous sentences improves translation quality → Results are cached to reduce API calls.</p>
+                
+                <p><strong>Step 5: Display</strong></p>
+                <p style="color: #64748b;">Translated text is sent via BroadcastChannel and Electron IPC → Subtitle overlay receives and renders the text → Custom styling (font, color, background) is applied.</p>
+            </div>
+        </div>
+        
+        <h2>Translation Pipeline</h2>
+        
+        <table>
+            <tr>
+                <th>Stage</th>
+                <th>Description</th>
+                <th>Latency</th>
+            </tr>
+            <tr>
+                <td>Cache Check</td>
+                <td>Check translation cache for existing translation</td>
+                <td>&lt;1ms</td>
+            </tr>
+            <tr>
+                <td>Context Building</td>
+                <td>Add previous sentences for context-aware translation</td>
+                <td>&lt;1ms</td>
+            </tr>
+            <tr>
+                <td>API Call</td>
+                <td>Google Translate API request with 3s timeout</td>
+                <td>100-500ms</td>
+            </tr>
+            <tr>
+                <td>Response Parsing</td>
+                <td>Extract translated text from API response</td>
+                <td>&lt;5ms</td>
+            </tr>
+            <tr>
+                <td>Cache Storage</td>
+                <td>Store translation for future requests</td>
+                <td>&lt;1ms</td>
+            </tr>
+        </table>
+        
+        <h2>Audio Processing Configuration</h2>
+        
+        <pre><code>// Whisper Inference Settings
+{
+    language: 'english',
+    task: 'transcribe',
+    chunk_length_s: 30,
+    temperature: 0.0,        // Deterministic output
+    beam_size: 5,            // Multiple search beams
+    best_of: 3,              // Candidate selection
+    no_speech_threshold: 0.6
+}</code></pre>
+    </div>
+
+    <!-- Project Structure -->
+    <div class="page page-break">
+        <h1>7. Project Structure</h1>
+        
+        <pre><code>Lumina/
+├── electron/                    # Electron main process
+│   ├── main.ts                 # Window creation, IPC handlers
+│   └── preload.ts              # Context bridge for renderer
+├── src/                        # React frontend source
+│   ├── components/
+│   │   ├── Dashboard.tsx       # Main control interface
+│   │   └── SubtitlePopup.tsx   # Overlay display component
+│   ├── hooks/
+│   │   ├── useHybridSpeechRecognition.ts  # Combined engine
+│   │   ├── useSpeechRecognition.ts        # Whisper-only
+│   │   └── useVoskRecognition.ts          # Vosk-only
+│   ├── utils/
+│   │   ├── translate.ts        # Translation service
+│   │   └── broadcast.ts        # BroadcastChannel utility
+│   ├── workers/
+│   │   └── whisper.worker.js   # Whisper inference worker
+│   ├── types/                  # TypeScript definitions
+│   ├── App.tsx                 # Root component
+│   ├── main.tsx                # React entry point
+│   └── index.css               # Global styles
+├── public/
+│   └── models/                 # Local ML model files
+│       └── whisper-base.en/    # Whisper model (ONNX)
+├── package.json                # Dependencies & scripts
+├── vite.config.ts              # Vite configuration
+├── tailwind.config.js          # TailwindCSS config
+└── tsconfig.json               # TypeScript configuration</code></pre>
+        
+        <h2>Key Files Explained</h2>
+        
+        <table>
+            <tr>
+                <th>File</th>
+                <th>Purpose</th>
+            </tr>
+            <tr>
+                <td><code>electron/main.ts</code></td>
+                <td>Electron main process - window management, IPC, permissions</td>
+            </tr>
+            <tr>
+                <td><code>Dashboard.tsx</code></td>
+                <td>Primary UI - controls, settings, visualization</td>
+            </tr>
+            <tr>
+                <td><code>SubtitlePopup.tsx</code></td>
+                <td>Transparent overlay for subtitle display</td>
+            </tr>
+            <tr>
+                <td><code>useHybridSpeechRecognition.ts</code></td>
+                <td>Core hook combining Vosk and Whisper engines</td>
+            </tr>
+            <tr>
+                <td><code>whisper.worker.js</code></td>
+                <td>Web Worker running Whisper model inference</td>
+            </tr>
+            <tr>
+                <td><code>translate.ts</code></td>
+                <td>Translation service with caching and context</td>
+            </tr>
+        </table>
+    </div>
+
+    <!-- Installation -->
+    <div class="page page-break">
+        <h1>8. Installation & Setup</h1>
+        
+        <h2>Prerequisites</h2>
+        <ul>
+            <li><strong>Node.js:</strong> Version 18 or higher</li>
+            <li><strong>npm:</strong> Included with Node.js</li>
+            <li><strong>Operating System:</strong> Windows 10/11, macOS, or Linux</li>
+        </ul>
+        
+        <h2>Installation Steps</h2>
+        
+        <pre><code># Clone the repository
+git clone https://github.com/Mathew222/Lumina.git
+cd Lumina
+
+# Install dependencies
+npm install
+
+# Download Whisper model (if not included)
+# Model files go in public/models/whisper-base.en/
+
+# Run in development mode
+npm run electron:dev
+
+# Build for production
+npm run electron:build
+
+# Package for distribution
+npm run dist</code></pre>
+        
+        <h2>Available Scripts</h2>
+        
+        <table>
+            <tr>
+                <th>Script</th>
+                <th>Command</th>
+                <th>Description</th>
+            </tr>
+            <tr>
+                <td>Development</td>
+                <td><code>npm run electron:dev</code></td>
+                <td>Start app with hot reload</td>
+            </tr>
+            <tr>
+                <td>Build Frontend</td>
+                <td><code>npm run build</code></td>
+                <td>Build React app for production</td>
+            </tr>
+            <tr>
+                <td>Build Electron</td>
+                <td><code>npm run electron:build</code></td>
+                <td>Compile Electron main process</td>
+            </tr>
+            <tr>
+                <td>Package</td>
+                <td><code>npm run dist</code></td>
+                <td>Create distributable installer</td>
+            </tr>
+        </table>
+        
+        <h2>System Audio Configuration (Windows)</h2>
+        <div class="info-box">
+            <p><strong>Note:</strong> For system audio capture on Windows, you may need to enable "Stereo Mix" in Windows Sound Settings, or use virtual audio cable software.</p>
+            <ul style="margin-top: 10px;">
+                <li>Right-click speaker icon → Sounds → Recording tab</li>
+                <li>Enable "Stereo Mix" if available</li>
+                <li>Set as default recording device</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- Future Enhancements -->
+    <div class="page page-break">
+        <h1>9. Future Enhancements</h1>
+        
+        <h2>Planned Features</h2>
+        
+        <table>
+            <tr>
+                <th>Feature</th>
+                <th>Priority</th>
+                <th>Description</th>
+            </tr>
+            <tr>
+                <td>🗣️ Multiple Language Recognition</td>
+                <td>High</td>
+                <td>Support for recognizing speech in languages other than English</td>
+            </tr>
+            <tr>
+                <td>🌍 More Translation Languages</td>
+                <td>High</td>
+                <td>Expand translation support beyond English and Malayalam</td>
+            </tr>
+            <tr>
+                <td>📁 Subtitle Export</td>
+                <td>Medium</td>
+                <td>Export transcriptions as SRT/VTT files</td>
+            </tr>
+            <tr>
+                <td>🎨 Custom Themes</td>
+                <td>Medium</td>
+                <td>User-defined color schemes and layouts</td>
+            </tr>
+            <tr>
+                <td>⌨️ Keyboard Shortcuts</td>
+                <td>Medium</td>
+                <td>Global hotkeys for quick control</td>
+            </tr>
+            <tr>
+                <td>📱 Mobile Companion</td>
+                <td>Low</td>
+                <td>Mobile app to view subtitles on phone</td>
+            </tr>
+            <tr>
+                <td>☁️ Cloud Sync</td>
+                <td>Low</td>
+                <td>Sync settings and history across devices</td>
+            </tr>
+        </table>
+        
+        <h2>Technical Improvements</h2>
+        <ul>
+            <li><strong>Larger Whisper Models:</strong> Option to use whisper-small or whisper-medium for better accuracy</li>
+            <li><strong>GPU Acceleration:</strong> CUDA/WebGL support for faster inference</li>
+            <li><strong>Streaming ASR:</strong> Implement true streaming recognition for lower latency</li>
+            <li><strong>Local Translation:</strong> Optional offline translation using local models</li>
+        </ul>
+        
+        <hr class="section-divider">
+        
+        <div style="text-align: center; margin-top: 60px; color: #64748b;">
+            <p style="font-size: 20px; margin-bottom: 15px;">📄 End of Documentation</p>
+            <p style="font-size: 12px;">Lumina v1.0.0 • December 2024</p>
+            <p style="font-size: 11px; margin-top: 20px;">To save as PDF: Press <strong>Ctrl+P</strong> (or Cmd+P on Mac) and select "Save as PDF"</p>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,6 +1,6 @@
 /**
- * Translation Utility with Context-Based Translation
- * Uses Google Translate API (free tier) for accurate context-aware translations
+ * Translation Utility with Low-Latency Translation
+ * Optimized for real-time subtitle translation
  */
 
 export type SupportedLanguage = 'en' | 'ml';
@@ -13,54 +13,108 @@ export const LANGUAGES: { code: SupportedLanguage; name: string; nativeName: str
 // Cache for translations to avoid repeated API calls
 const translationCache = new Map<string, string>();
 
-// Context buffer for context-aware translation
+// Pending translation requests to prevent duplicate calls
+const pendingRequests = new Map<string, Promise<string>>();
+
+// Context buffer for context-aware translation (reduced for speed)
 let contextBuffer: string[] = [];
-const MAX_CONTEXT_SENTENCES = 5;
+const MAX_CONTEXT_SENTENCES = 2; // Reduced from 5 for faster translation
+
+// Pre-warm cache with common words/phrases for Malayalam
+const commonTranslations: Record<string, string> = {
+    'hello': 'ഹലോ',
+    'thank you': 'നന്ദി',
+    'yes': 'അതെ',
+    'no': 'ഇല്ല',
+    'okay': 'ശരി',
+    'please': 'ദയവായി',
+    'sorry': 'ക്ഷമിക്കണം',
+    'good': 'നല്ലത്',
+    'the': '',  // Skip common articles
+    'a': '',
+    'an': '',
+};
+
+// Initialize cache with common translations
+Object.entries(commonTranslations).forEach(([en, ml]) => {
+    if (ml) translationCache.set(`${en}_ml`, ml);
+});
 
 /**
  * Translate text using Google Translate API (free tier)
- * @param text - Text to translate
- * @param targetLang - Target language code
- * @param useContext - Whether to use context from previous sentences
+ * Optimized for low latency with reduced context
  */
 export async function translateText(
     text: string,
     targetLang: SupportedLanguage,
     useContext: boolean = true
 ): Promise<string> {
-    // No translation needed for English
-    if (targetLang === 'en') {
+    if (targetLang === 'en' || !text.trim()) {
         return text;
     }
 
-    // Check cache first
-    const cacheKey = `${text}_${targetLang}`;
+    // Check cache first (fastest path)
+    const cacheKey = `${text.toLowerCase().trim()}_${targetLang}`;
     if (translationCache.has(cacheKey)) {
+        // Update context even for cached results
+        updateContext(text);
         return translationCache.get(cacheKey)!;
     }
 
+    // Check if there's already a pending request for this text
+    if (pendingRequests.has(cacheKey)) {
+        return pendingRequests.get(cacheKey)!;
+    }
+
+    // Create the translation promise
+    const translationPromise = performTranslation(text, targetLang, useContext, cacheKey);
+    pendingRequests.set(cacheKey, translationPromise);
+
     try {
-        // Build context-enhanced text for better translation
+        const result = await translationPromise;
+        return result;
+    } finally {
+        pendingRequests.delete(cacheKey);
+    }
+}
+
+async function performTranslation(
+    text: string,
+    targetLang: SupportedLanguage,
+    useContext: boolean,
+    cacheKey: string
+): Promise<string> {
+    try {
+        // Build minimal context for faster translation
         let textToTranslate = text;
 
+        // Only use 1-2 previous sentences for context (faster)
         if (useContext && contextBuffer.length > 0) {
-            // Include previous context for better translation accuracy
-            // The translator will use this context but we only return the last sentence's translation
-            const contextText = contextBuffer.join('. ') + '. ' + text;
-            textToTranslate = contextText;
+            // Use only the last sentence for minimal context
+            const lastContext = contextBuffer[contextBuffer.length - 1];
+            textToTranslate = lastContext + '. ' + text;
         }
 
-        // Use Google Translate API (free tier via unofficial endpoint)
+        // Use Google Translate API with timeout for faster failure
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000); // 3s timeout
+
         const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=${targetLang}&dt=t&q=${encodeURIComponent(textToTranslate)}`;
 
-        const response = await fetch(url);
+        const response = await fetch(url, {
+            signal: controller.signal,
+            // Hint to browser for faster connection
+            keepalive: true,
+        });
+        clearTimeout(timeoutId);
+
         if (!response.ok) {
             throw new Error(`Translation failed: ${response.status}`);
         }
 
         const data = await response.json();
 
-        // Parse the response - Google returns nested arrays
+        // Parse the response
         let translatedText = '';
         if (data && data[0]) {
             for (const segment of data[0]) {
@@ -70,34 +124,33 @@ export async function translateText(
             }
         }
 
-        // If we used context, extract only the translation of the current text
-        // The context sentences are separated by '. '
+        // Extract only the current sentence's translation if context was used
         if (useContext && contextBuffer.length > 0) {
             const parts = translatedText.split('. ');
-            // The last part should be our current sentence
             translatedText = parts[parts.length - 1] || translatedText;
         }
 
-        // Update context buffer
-        contextBuffer.push(text);
-        if (contextBuffer.length > MAX_CONTEXT_SENTENCES) {
-            contextBuffer.shift();
-        }
-
-        // Cache the result
+        // Update context and cache
+        updateContext(text);
         translationCache.set(cacheKey, translatedText);
 
         return translatedText;
     } catch (error) {
         console.error('[Translation] Error:', error);
-        // Return original text on error
         return text;
     }
 }
 
+function updateContext(text: string): void {
+    contextBuffer.push(text);
+    if (contextBuffer.length > MAX_CONTEXT_SENTENCES) {
+        contextBuffer.shift();
+    }
+}
+
 /**
- * Translate text in real-time (for interim results - less accurate but faster)
- * Uses simpler translation without context for speed
+ * Translate text in real-time (for interim results)
+ * Ultra-fast path with minimal processing
  */
 export async function translateInterim(
     text: string,
@@ -107,45 +160,81 @@ export async function translateInterim(
         return text;
     }
 
+    // Very short text - check common words cache
+    const lowerText = text.toLowerCase().trim();
+    if (lowerText.length < 15) {
+        const cached = translationCache.get(`${lowerText}_${targetLang}`);
+        if (cached !== undefined) {
+            return cached || text;
+        }
+    }
+
     // Check cache
-    const cacheKey = `interim_${text}_${targetLang}`;
+    const cacheKey = `interim_${lowerText}_${targetLang}`;
     if (translationCache.has(cacheKey)) {
         return translationCache.get(cacheKey)!;
     }
 
-    try {
-        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
+    // Check pending requests
+    if (pendingRequests.has(cacheKey)) {
+        return pendingRequests.get(cacheKey)!;
+    }
 
-        const response = await fetch(url);
-        if (!response.ok) {
+    // Perform fast translation without context
+    const translationPromise = (async () => {
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 2000); // 2s timeout for interim
+
+            const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
+
+            const response = await fetch(url, {
+                signal: controller.signal,
+                keepalive: true,
+            });
+            clearTimeout(timeoutId);
+
+            if (!response.ok) {
+                return text;
+            }
+
+            const data = await response.json();
+            let translatedText = '';
+            if (data && data[0]) {
+                for (const segment of data[0]) {
+                    if (segment[0]) {
+                        translatedText += segment[0];
+                    }
+                }
+            }
+
+            // Cache with size limit
+            if (translationCache.size > 500) {
+                // Clear old interim translations
+                const keys = Array.from(translationCache.keys());
+                let cleared = 0;
+                for (const key of keys) {
+                    if (key.startsWith('interim_')) {
+                        translationCache.delete(key);
+                        cleared++;
+                        if (cleared >= 100) break;
+                    }
+                }
+            }
+            translationCache.set(cacheKey, translatedText);
+
+            return translatedText;
+        } catch {
             return text;
         }
+    })();
 
-        const data = await response.json();
-        let translatedText = '';
-        if (data && data[0]) {
-            for (const segment of data[0]) {
-                if (segment[0]) {
-                    translatedText += segment[0];
-                }
-            }
-        }
+    pendingRequests.set(cacheKey, translationPromise);
 
-        // Cache interim translations too (smaller cache)
-        if (translationCache.size > 500) {
-            // Clear old interim translations to prevent memory issues
-            const keys = Array.from(translationCache.keys());
-            for (let i = 0; i < 100; i++) {
-                if (keys[i]?.startsWith('interim_')) {
-                    translationCache.delete(keys[i]);
-                }
-            }
-        }
-        translationCache.set(cacheKey, translatedText);
-
-        return translatedText;
-    } catch {
-        return text;
+    try {
+        return await translationPromise;
+    } finally {
+        pendingRequests.delete(cacheKey);
     }
 }
 
@@ -162,4 +251,9 @@ export function clearTranslationContext(): void {
 export function clearTranslationCache(): void {
     translationCache.clear();
     contextBuffer = [];
+    pendingRequests.clear();
+    // Re-add common translations
+    Object.entries(commonTranslations).forEach(([en, ml]) => {
+        if (ml) translationCache.set(`${en}_ml`, ml);
+    });
 }
