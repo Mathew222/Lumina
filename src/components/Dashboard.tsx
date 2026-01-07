@@ -7,7 +7,7 @@ import type { SupportedLanguage } from '../utils/translate';
 import type { Session, Summary } from '../types/session';
 import { summarizeConversation, getStoredApiKey, setStoredApiKey } from '../utils/gemini';
 import { saveSession, generateSessionId } from '../utils/sessionStorage';
-import { SummaryPanel } from './SummaryPanel';
+import { SummaryView } from './SummaryView';
 import { SessionHistory } from './SessionHistory';
 
 export const Dashboard = () => {
@@ -35,16 +35,19 @@ export const Dashboard = () => {
     const [recordingStartTime, setRecordingStartTime] = useState<number | null>(null);
     const [recordingDuration, setRecordingDuration] = useState(0);
     const transcriptBufferRef = useRef<string[]>([]);
+    const isSummarizingRef = useRef(false);
 
     // Summary Panel State
     const [showSummaryPanel, setShowSummaryPanel] = useState(false);
     const [currentSummary, setCurrentSummary] = useState<Summary | null>(null);
     const [isSummarizing, setIsSummarizing] = useState(false);
     const [summaryError, setSummaryError] = useState<string | null>(null);
+    const [currentTranscript, setCurrentTranscript] = useState<string>('');
+    const [currentRecordedAt, setCurrentRecordedAt] = useState<string>('');
+    const [currentDuration, setCurrentDuration] = useState<number>(0);
 
     // Session History State
     const [showSessionHistory, setShowSessionHistory] = useState(false);
-    const [selectedSession, setSelectedSession] = useState<Session | null>(null);
 
     // API Key State
     const [geminiApiKey, setGeminiApiKey] = useState(() => getStoredApiKey());
@@ -191,11 +194,16 @@ export const Dashboard = () => {
         };
     }, [interimText, targetLanguage]);
 
-    // Send translated text and style settings to overlay
+    // Send text and style settings to overlay IMMEDIATELY for low latency
+    // Use refs for style to avoid extra dependencies
+    const styleRef = useRef({ fontSize, showBackground, textColor });
     useEffect(() => {
-        const displayText = translatedText;
-        const displayInterim = translatedInterim;
-        const styleSettings = { fontSize, showBackground, textColor };
+        styleRef.current = { fontSize, showBackground, textColor };
+    }, [fontSize, showBackground, textColor]);
+
+    // Immediate send function for lowest latency
+    const sendToOverlay = useCallback((displayText: string, displayInterim: string) => {
+        const styleSettings = styleRef.current;
 
         if (channelRef.current) {
             sendMessage(channelRef.current, 'TRANSCRIPT', {
@@ -211,7 +219,28 @@ export const Dashboard = () => {
                 style: styleSettings
             });
         }
-    }, [translatedText, translatedInterim, fontSize, showBackground, textColor]);
+    }, []);
+
+    // For English: Send immediately without translation delay
+    useEffect(() => {
+        if (targetLanguage === 'en') {
+            sendToOverlay(text, interimText);
+        }
+    }, [text, interimText, targetLanguage, sendToOverlay]);
+
+    // For other languages: Send when translation completes
+    useEffect(() => {
+        if (targetLanguage !== 'en') {
+            sendToOverlay(translatedText, translatedInterim);
+        }
+    }, [translatedText, translatedInterim, targetLanguage, sendToOverlay]);
+
+    // Also send when style changes
+    useEffect(() => {
+        const displayText = targetLanguage === 'en' ? text : translatedText;
+        const displayInterim = targetLanguage === 'en' ? interimText : translatedInterim;
+        sendToOverlay(displayText, displayInterim);
+    }, [fontSize, showBackground, textColor]);
 
     const openPopup = () => {
         if (window.electron) {
@@ -274,6 +303,13 @@ export const Dashboard = () => {
     }, [isListening, startListening]);
 
     const stopRecording = useCallback(async () => {
+        // Guard against multiple clicks - prevent duplicate API calls
+        if (isSummarizingRef.current) {
+            console.log('[Dashboard] Summarization already in progress, ignoring click');
+            return;
+        }
+        isSummarizingRef.current = true;
+
         setIsRecording(false);
         const endTime = Date.now();
         const startTime = recordingStartTime || endTime;
@@ -284,6 +320,7 @@ export const Dashboard = () => {
 
         if (!fullTranscript) {
             setSummaryError('No transcript captured during recording.');
+            isSummarizingRef.current = false;
             return;
         }
 
@@ -300,6 +337,11 @@ export const Dashboard = () => {
 
         // Save session first (without summary)
         saveSession(session);
+
+        // Store transcript and metadata for display
+        setCurrentTranscript(fullTranscript);
+        setCurrentRecordedAt(new Date(startTime).toISOString());
+        setCurrentDuration(duration);
 
         // Show summary panel with loading state
         setShowSummaryPanel(true);
@@ -319,6 +361,7 @@ export const Dashboard = () => {
         }
 
         setIsSummarizing(false);
+        isSummarizingRef.current = false;
     }, [recordingStartTime, geminiApiKey, targetLanguage]);
 
     const handleSaveApiKey = (key: string) => {
@@ -328,8 +371,10 @@ export const Dashboard = () => {
     };
 
     const handleSelectSession = (session: Session) => {
-        setSelectedSession(session);
         setCurrentSummary(session.summary);
+        setCurrentTranscript(session.transcript);
+        setCurrentRecordedAt(session.startedAt);
+        setCurrentDuration(session.duration);
         setShowSessionHistory(false);
         setShowSummaryPanel(true);
     };
@@ -387,10 +432,10 @@ export const Dashboard = () => {
                     {/* Record Session Button */}
                     <button
                         onClick={isRecording ? stopRecording : startRecording}
-                        disabled={isModelLoading}
+                        disabled={isModelLoading || isSummarizing}
                         className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold tracking-widest transition-all uppercase ${isRecording
-                                ? 'bg-red-500/20 border border-red-500/50 text-red-400 hover:bg-red-500/30'
-                                : 'border border-purple-500/50 text-purple-400 hover:bg-purple-500/20'
+                            ? 'bg-red-500/20 border border-red-500/50 text-red-400 hover:bg-red-500/30'
+                            : 'border border-purple-500/50 text-purple-400 hover:bg-purple-500/20'
                             }`}
                     >
                         {isRecording ? (
@@ -537,8 +582,8 @@ export const Dashboard = () => {
                                         <button
                                             onClick={() => setShowApiKeyInput(true)}
                                             className={`w-full py-2 rounded-lg text-xs font-bold uppercase transition-colors flex items-center justify-center gap-2 ${geminiApiKey
-                                                    ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-                                                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                                                ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                                                : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
                                                 }`}
                                         >
                                             <Sparkles className="w-3 h-3" />
@@ -674,15 +719,17 @@ export const Dashboard = () => {
                 />
             )}
 
-            {/* Summary Panel */}
+            {/* Summary View */}
             {showSummaryPanel && (
-                <SummaryPanel
+                <SummaryView
                     summary={currentSummary}
                     isLoading={isSummarizing}
                     error={summaryError}
+                    transcript={currentTranscript}
+                    duration={currentDuration}
+                    recordedAt={currentRecordedAt}
                     onClose={() => {
                         setShowSummaryPanel(false);
-                        setSelectedSession(null);
                     }}
                 />
             )}
