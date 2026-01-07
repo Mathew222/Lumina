@@ -52,6 +52,7 @@ export const Dashboard = () => {
     // API Key State
     const [geminiApiKey, setGeminiApiKey] = useState(() => getStoredApiKey());
     const [showApiKeyInput, setShowApiKeyInput] = useState(false);
+    const [summaryLanguage, setSummaryLanguage] = useState<'en' | 'ml'>('en'); // en = English, ml = Malayalam
 
     // Preset colors for text
     const TEXT_COLORS = [
@@ -348,8 +349,8 @@ export const Dashboard = () => {
         setIsSummarizing(true);
         setSummaryError(null);
 
-        // Get summary from Gemini
-        const result = await summarizeConversation(fullTranscript, geminiApiKey);
+        // Get summary from Gemini (with selected language)
+        const result = await summarizeConversation(fullTranscript, geminiApiKey, summaryLanguage);
 
         if (result.success) {
             setCurrentSummary(result.summary);
@@ -590,6 +591,34 @@ export const Dashboard = () => {
                                             {geminiApiKey ? 'API Key Set' : 'Add API Key'}
                                         </button>
                                     )}
+                                </div>
+
+                                {/* Summary Language Selector */}
+                                <div className="pt-3 border-t border-gray-800">
+                                    <label className="text-xs text-gray-500 block mb-2 flex items-center gap-2">
+                                        <Globe className="w-3 h-3" />
+                                        Summary Language
+                                    </label>
+                                    <div className="flex gap-2">
+                                        <button
+                                            onClick={() => setSummaryLanguage('en')}
+                                            className={`flex-1 py-2 rounded-lg text-xs font-bold uppercase transition-colors ${summaryLanguage === 'en'
+                                                ? 'bg-purple-600 text-white'
+                                                : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                                                }`}
+                                        >
+                                            English
+                                        </button>
+                                        <button
+                                            onClick={() => setSummaryLanguage('ml')}
+                                            className={`flex-1 py-2 rounded-lg text-xs font-bold uppercase transition-colors ${summaryLanguage === 'ml'
+                                                ? 'bg-purple-600 text-white'
+                                                : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                                                }`}
+                                        >
+                                            മലയാളം
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         )}

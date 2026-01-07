@@ -6,7 +6,14 @@ import type { Summary } from '../types/session';
 
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
-const SUMMARIZATION_PROMPT = `You are an AI assistant that summarizes conversations. Analyze the following transcript and provide a structured summary.
+const getSummarizationPrompt = (outputLanguage: string = 'en') => {
+    const languageInstruction = outputLanguage === 'ml'
+        ? '\n- IMPORTANT: Write ALL text content (briefSummary, keyPoints, topics, actionItems) in Malayalam (മലയാളം). Use Malayalam script.'
+        : outputLanguage !== 'en'
+            ? `\n- IMPORTANT: Write ALL text content in ${outputLanguage}.`
+            : '';
+
+    return `You are an AI assistant that summarizes conversations. Analyze the following transcript and provide a structured summary.
 
 TRANSCRIPT:
 {transcript}
@@ -25,7 +32,8 @@ Rules:
 - topics should be 2-5 main themes/subjects discussed (single words or short phrases)
 - actionItems should list any tasks, to-dos, or next steps mentioned (can be empty array if none)
 - Keep all text concise and clear
-- Return ONLY valid JSON, no additional text`;
+- Return ONLY valid JSON, no additional text${languageInstruction}`;
+};
 
 export interface GeminiError {
     message: string;
@@ -34,10 +42,12 @@ export interface GeminiError {
 
 /**
  * Summarize a conversation transcript using Gemini API
+ * @param outputLanguage - Language code for summary output (e.g., 'en', 'ml' for Malayalam)
  */
 export async function summarizeConversation(
     transcript: string,
-    apiKey: string
+    apiKey: string,
+    outputLanguage: string = 'en'
 ): Promise<{ success: true; summary: Summary } | { success: false; error: GeminiError }> {
     if (!apiKey || apiKey.trim() === '') {
         return {
@@ -54,7 +64,7 @@ export async function summarizeConversation(
     }
 
     try {
-        const prompt = SUMMARIZATION_PROMPT.replace('{transcript}', transcript);
+        const prompt = getSummarizationPrompt(outputLanguage).replace('{transcript}', transcript);
 
         const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
             method: 'POST',

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, Trash2, Download, Clock, MessageSquare, ChevronRight, History, AlertCircle } from 'lucide-react';
 import type { Session } from '../types/session';
 import { getSessions, deleteSession, exportSessionAsText, formatDuration, getStorageInfo } from '../utils/sessionStorage';
@@ -10,8 +10,15 @@ interface SessionHistoryProps {
 }
 
 export const SessionHistory = ({ isOpen, onClose, onSelectSession }: SessionHistoryProps) => {
-    const [sessions, setSessions] = useState<Session[]>(() => getSessions());
+    const [sessions, setSessions] = useState<Session[]>([]);
     const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+
+    // Refresh sessions when panel opens
+    useEffect(() => {
+        if (isOpen) {
+            setSessions(getSessions());
+        }
+    }, [isOpen]);
 
     const refreshSessions = () => {
         setSessions(getSessions());
@@ -37,7 +44,7 @@ export const SessionHistory = ({ isOpen, onClose, onSelectSession }: SessionHist
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `lumina-session-${new Date(session.startedAt).toISOString().slice(0, 10)}.txt`;
+        a.download = `lumina - session - ${new Date(session.startedAt).toISOString().slice(0, 10)}.txt`;
         a.click();
         URL.revokeObjectURL(url);
     };
@@ -48,9 +55,9 @@ export const SessionHistory = ({ isOpen, onClose, onSelectSession }: SessionHist
         const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
 
         if (diffDays === 0) {
-            return `Today at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+            return `Today at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} `;
         } else if (diffDays === 1) {
-            return `Yesterday at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+            return `Yesterday at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} `;
         } else if (diffDays < 7) {
             return `${diffDays} days ago`;
         } else {
@@ -156,14 +163,14 @@ export const SessionHistory = ({ isOpen, onClose, onSelectSession }: SessionHist
                                             </button>
                                             <button
                                                 onClick={(e) => handleDelete(session.id, e)}
-                                                className={`p-2 rounded-lg transition-colors ${confirmDelete === session.id
+                                                className={`p - 2 rounded - lg transition - colors ${confirmDelete === session.id
                                                         ? 'bg-red-500/20 hover:bg-red-500/30'
                                                         : 'hover:bg-gray-700'
-                                                    }`}
+                                                    } `}
                                                 title={confirmDelete === session.id ? 'Click again to confirm' : 'Delete session'}
                                             >
-                                                <Trash2 className={`w-4 h-4 ${confirmDelete === session.id ? 'text-red-400' : 'text-gray-400'
-                                                    }`} />
+                                                <Trash2 className={`w - 4 h - 4 ${confirmDelete === session.id ? 'text-red-400' : 'text-gray-400'
+                                                    } `} />
                                             </button>
                                             <ChevronRight className="w-4 h-4 text-gray-600" />
                                         </div>
