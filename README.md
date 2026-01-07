@@ -1,46 +1,90 @@
-# Lumina
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Mathew222/Lumina/master/public/logo.png" width="100" alt="Lumina Logo" />
+</p>
 
-A real-time subtitle generation application built with React, TypeScript, and Electron.
+<h1 align="center">Lumina</h1>
 
-## Features
+<p align="center">
+  <strong>Real-time AI-powered subtitle generation for your desktop.</strong><br />
+  Built with React, Electron, and Speech-to-Text Engines.
+</p>
 
-- 🎙️ Real-time audio transcription
-- 📝 Live subtitle display with customizable popup
-- 🎨 Text customization options (size, color, background)
-- 🌐 Translation support
-- ⚡ Powered by Whisper/Vosk for accurate speech recognition
+<p align="center">
+  <img src="https://img.shields.io/github/license/Mathew222/Lumina?style=flat-square&color=5D6AD1" alt="License" />
+  <img src="https://img.shields.io/github/stars/Mathew222/Lumina?style=flat-square&color=5D6AD1" alt="Stars" />
+  <img src="https://img.shields.io/github/issues/Mathew222/Lumina?style=flat-square&color=5D6AD1" alt="Issues" />
+</p>
 
-## Tech Stack
+---
 
-- **Frontend:** React + TypeScript + Vite
-- **Desktop:** Electron
-- **Speech Recognition:** Whisper.cpp / Vosk
-- **Styling:** TailwindCSS
+## 📖 Overview
 
-## Getting Started
+**Lumina** is a lightweight desktop application that provides real-time audio transcription and live subtitle overlays. Whether you are watching a video without captions, attending a live meeting, or need translation on the fly, Lumina captures system/mic audio and displays it in a highly customizable popup window.
+
+## 🚀 Key Features
+
+*   🎙️ **Real-time Transcription:** Ultra-low latency audio processing using Whisper/Vosk.
+*   📝 **Live Subtitle Overlay:** A floating, transparent window that stays on top of other apps.
+*   🎨 **Full Customization:** Change font size, text color, and background opacity to suit your needs.
+*   🌐 **Translation Support:** Multi-language support for global accessibility.
+*   ⚡ **Offline Capability:** Powered by localized engines for privacy and speed.
+
+## 🛠️ Tech Stack
+
+![React](https://img.shields.io/badge/react-%2320232a.svg?style=for-the-badge&logo=react&logoColor=%2361DAFB) ![TypeScript](https://img.shields.io/badge/typescript-%23007ACC.svg?style=for-the-badge&logo=typescript&logoColor=white) ![Electron](https://img.shields.io/badge/Electron-2B2E3A?style=for-the-badge&logo=electron&logoColor=9FEAF9) ![Vite](https://img.shields.io/badge/vite-%23646CFF.svg?style=for-the-badge&logo=vite&logoColor=white) ![TailwindCSS](https://img.shields.io/badge/tailwindcss-%2338B2AC.svg?style=for-the-badge&logo=tailwind-css&logoColor=white) ![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54) ![OpenAI](https://img.shields.io/badge/Whisper-AI-black?style=for-the-badge&logo=openai)
+
+---
+
+## ⚙️ Getting Started
 
 ### Prerequisites
 
-- Node.js (v18 or higher)
-- npm or yarn
+*   [Node.js](https://nodejs.org/) (v18 or higher)
+*   `npm` or `yarn`
 
 ### Installation
 
-```bash
-# Install dependencies
-npm install
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/Mathew222/Lumina.git
+    cd Lumina
+    ```
 
-# Run in development mode
-npm run electron:dev
+2.  **Install dependencies:**
+    ```bash
+    npm install
+    ```
 
-# Build for production
-npm run electron:build
-```
+3.  **Run in development mode:**
+    ```bash
+    npm run electron:dev
+    ```
 
-## Latest Commit
+4.  **Build for production:**
+    ```bash
+    npm run electron:build
+    ```
 
-`db52927` - added customization (Mathew222, 2025-12-31)
+---
 
-## License
+## 🎨 Customization
 
-MIT
+Lumina allows you to tailor the experience via the settings panel:
+*   **Font Settings:** Adjust size and weight for readability.
+*   **Visuals:** Switch between Dark/Light modes or set custom HEX colors for subtitles.
+*   **Engine Selection:** Choose between **Whisper.cpp** for high accuracy or **Vosk** for low-resource environments.
+
+## 📄 License
+
+This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
+
+---
+
+<p align="center">
+  <img width="48%" src="https://github-readme-stats-eight-theta.vercel.app/api?username=Mathew222&show_icons=true&theme=tokyonight&count_private=true&hide_border=true" />
+  <img width="48%" src="https://github-readme-stats-eight-theta.vercel.app/api/top-langs/?username=Mathew222&layout=compact&theme=tokyonight&hide_border=true" />
+</p>
+
+<p align="center">
+  <img width="100%" src="https://streak-stats.demolab.com/?user=Mathew222&theme=tokyonight&hide_border=true" />
+</p>
