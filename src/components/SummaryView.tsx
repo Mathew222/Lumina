@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, Copy, Check, Sparkles, ListChecks, Tag, ClipboardList, FileText, ChevronDown, ChevronUp, Clock, Calendar } from 'lucide-react';
+import { X, Copy, Check, Sparkles, ListChecks, Tag, ClipboardList, FileText, ChevronDown, ChevronUp, Clock, Calendar, Languages } from 'lucide-react';
 import type { Summary } from '../types/session';
 
 interface SummaryViewProps {
@@ -10,6 +10,9 @@ interface SummaryViewProps {
     duration?: number;
     recordedAt?: string;
     onClose: () => void;
+    onTranslate?: (language: 'en' | 'ml') => void;
+    isTranslating?: boolean;
+    currentLanguage?: 'en' | 'ml';
 }
 
 export const SummaryView = ({
@@ -19,7 +22,10 @@ export const SummaryView = ({
     transcript,
     duration,
     recordedAt,
-    onClose
+    onClose,
+    onTranslate,
+    isTranslating = false,
+    currentLanguage = 'en'
 }: SummaryViewProps) => {
     const [copied, setCopied] = useState(false);
     const [showTranscript, setShowTranscript] = useState(false);
@@ -108,6 +114,23 @@ ${transcript ? `\n📄 Full Transcript:\n${transcript}` : ''}`;
                                         <span className="text-gray-300">Copy All</span>
                                     </>
                                 )}
+                            </button>
+                        )}
+                        {summary && onTranslate && (
+                            <button
+                                onClick={() => onTranslate(currentLanguage === 'en' ? 'ml' : 'en')}
+                                disabled={isTranslating}
+                                className={`px-4 py-2 rounded-lg transition-colors flex items-center gap-2 text-sm ${isTranslating
+                                    ? 'bg-purple-500/30 cursor-wait'
+                                    : currentLanguage === 'ml'
+                                        ? 'bg-green-500/20 hover:bg-green-500/30 border border-green-500/30'
+                                        : 'bg-gray-800 hover:bg-gray-700'
+                                    }`}
+                            >
+                                <Languages className={`w-4 h-4 ${isTranslating ? 'animate-pulse text-purple-400' : currentLanguage === 'ml' ? 'text-green-400' : 'text-gray-400'}`} />
+                                <span className={currentLanguage === 'ml' ? 'text-green-400' : 'text-gray-300'}>
+                                    {isTranslating ? 'Translating...' : currentLanguage === 'ml' ? 'മലയാളം ✓' : 'മലയാളം'}
+                                </span>
                             </button>
                         )}
                         <button

@@ -363,7 +363,7 @@ export const Dashboard = () => {
 
         setIsSummarizing(false);
         isSummarizingRef.current = false;
-    }, [recordingStartTime, geminiApiKey, targetLanguage]);
+    }, [recordingStartTime, geminiApiKey, targetLanguage, summaryLanguage]);
 
     const handleSaveApiKey = (key: string) => {
         setGeminiApiKey(key);
@@ -376,9 +376,29 @@ export const Dashboard = () => {
         setCurrentTranscript(session.transcript);
         setCurrentRecordedAt(session.startedAt);
         setCurrentDuration(session.duration);
+        setSummaryLanguage('en'); // Reset language for historical sessions
         setShowSessionHistory(false);
         setShowSummaryPanel(true);
     };
+
+    // Handle translate summary to different language
+    const handleTranslateSummary = useCallback(async (language: 'en' | 'ml') => {
+        if (!currentTranscript || isSummarizing) return;
+
+        setSummaryLanguage(language);
+        setIsSummarizing(true);
+        setSummaryError(null);
+
+        const result = await summarizeConversation(currentTranscript, geminiApiKey, language);
+
+        if (result.success) {
+            setCurrentSummary(result.summary);
+        } else {
+            setSummaryError(result.error.message);
+        }
+
+        setIsSummarizing(false);
+    }, [currentTranscript, geminiApiKey, isSummarizing]);
 
     const formatRecordingTime = (seconds: number) => {
         const mins = Math.floor(seconds / 60);
@@ -759,7 +779,11 @@ export const Dashboard = () => {
                     recordedAt={currentRecordedAt}
                     onClose={() => {
                         setShowSummaryPanel(false);
+                        setSummaryLanguage('en'); // Reset language on close
                     }}
+                    onTranslate={handleTranslateSummary}
+                    isTranslating={isSummarizing}
+                    currentLanguage={summaryLanguage}
                 />
             )}
 
