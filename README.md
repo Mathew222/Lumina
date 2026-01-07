@@ -79,12 +79,3 @@ Lumina allows you to tailor the experience via the settings panel:
 This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
 
 ---
-
-<p align="center">
-  <img width="48%" src="https://github-readme-stats-eight-theta.vercel.app/api?username=Mathew222&show_icons=true&theme=tokyonight&count_private=true&hide_border=true" />
-  <img width="48%" src="https://github-readme-stats-eight-theta.vercel.app/api/top-langs/?username=Mathew222&layout=compact&theme=tokyonight&hide_border=true" />
-</p>
-
-<p align="center">
-  <img width="100%" src="https://streak-stats.demolab.com/?user=Mathew222&theme=tokyonight&hide_border=true" />
-</p>
