@@ -8,8 +8,8 @@ interface StyleSettings {
     textColor: string;
 }
 
-// Max characters before clearing (approximately 2 lines at full width)
-const MAX_DISPLAY_CHARS = 180;
+// Max characters before clearing (approximately 3-4 lines for longer reading time)
+const MAX_DISPLAY_CHARS = 350;
 
 export const SubtitlePopup = () => {
     const [displayText, setDisplayText] = useState('');
@@ -86,7 +86,7 @@ export const SubtitlePopup = () => {
         >
             {/* Single line display - all text together */}
             <p
-                className="text-lg md:text-xl font-sans font-medium leading-relaxed"
+                className="text-base md:text-lg font-sans font-medium leading-relaxed"
                 style={{ color: style.textColor }}
             >
                 {displayText}

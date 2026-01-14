@@ -137,31 +137,70 @@ export const Dashboard = () => {
         };
     }, []);
 
-    // Translate final text when it changes
+    // Translate final text - only translate new portions to keep existing text stable
+    const lastTranslatedLengthRef = useRef(0);
+    const stableTranslatedRef = useRef('');
+
     useEffect(() => {
         if (targetLanguage === 'en') {
             setTranslatedText(text);
+            lastTranslatedLengthRef.current = 0;
+            stableTranslatedRef.current = '';
             return;
         }
 
         if (!text) {
             setTranslatedText('');
+            lastTranslatedLengthRef.current = 0;
+            stableTranslatedRef.current = '';
             return;
         }
 
-        setIsTranslating(true);
-        translateText(text, targetLanguage, true)
-            .then(translated => {
-                setTranslatedText(translated);
-                setIsTranslating(false);
-            })
-            .catch(() => {
-                setTranslatedText(text);
-                setIsTranslating(false);
-            });
+        // Only translate new content (what was added since last translation)
+        const previousLength = lastTranslatedLengthRef.current;
+
+        // If text is shorter or same, just update (probably a correction)
+        if (text.length <= previousLength) {
+            // Re-translate everything for corrections
+            setIsTranslating(true);
+            translateText(text, targetLanguage, true)
+                .then(translated => {
+                    stableTranslatedRef.current = translated;
+                    setTranslatedText(translated);
+                    lastTranslatedLengthRef.current = text.length;
+                    setIsTranslating(false);
+                })
+                .catch(() => {
+                    setTranslatedText(stableTranslatedRef.current || text);
+                    setIsTranslating(false);
+                });
+            return;
+        }
+
+        // Text got longer - only translate the new part and append
+        const newContent = text.slice(previousLength).trim();
+        if (newContent.length > 0) {
+            setIsTranslating(true);
+            translateText(newContent, targetLanguage, false)
+                .then(translated => {
+                    const combined = stableTranslatedRef.current
+                        ? stableTranslatedRef.current + ' ' + translated
+                        : translated;
+                    stableTranslatedRef.current = combined;
+                    setTranslatedText(combined);
+                    lastTranslatedLengthRef.current = text.length;
+                    setIsTranslating(false);
+                })
+                .catch(() => {
+                    setTranslatedText(stableTranslatedRef.current || text);
+                    setIsTranslating(false);
+                });
+        }
     }, [text, targetLanguage]);
 
-    // Translate interim text with debouncing - fast word-by-word for Malayalam
+    // Translate interim text with debouncing - seamless like English
+    const lastInterimRef = useRef('');
+
     useEffect(() => {
         if (targetLanguage === 'en') {
             setTranslatedInterim(interimText);
@@ -170,8 +209,12 @@ export const Dashboard = () => {
 
         if (!interimText) {
             setTranslatedInterim('');
+            lastInterimRef.current = '';
             return;
         }
+
+        // Keep showing last translation while waiting (prevents blank state)
+        // Only update lastInterimRef when we get a new translation
 
         // Debounce interim translation
         if (interimTranslateTimeoutRef.current) {
@@ -181,12 +224,14 @@ export const Dashboard = () => {
         interimTranslateTimeoutRef.current = setTimeout(() => {
             translateInterim(interimText, targetLanguage)
                 .then(translated => {
+                    lastInterimRef.current = translated;
                     setTranslatedInterim(translated);
                 })
                 .catch(() => {
-                    setTranslatedInterim(interimText);
+                    // On error, keep last known translation or show original
+                    setTranslatedInterim(lastInterimRef.current || interimText);
                 });
-        }, 100); // 100ms debounce for fast translation
+        }, 50); // 50ms debounce for fastest translation
 
         return () => {
             if (interimTranslateTimeoutRef.current) {
