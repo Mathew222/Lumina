@@ -296,16 +296,16 @@ export function useHybridSpeechRecognition(): UseHybridSpeechRecognitionReturn {
             const source = audioContext.createMediaStreamSource(stream);
             sourceRef.current = source;
 
-            const processor = audioContext.createScriptProcessor(2048, 1, 1);  // 128ms buffer for low latency
+            const processor = audioContext.createScriptProcessor(512, 1, 1);  // 32ms buffer for ultra-low latency
             processorRef.current = processor;
 
             let voskBuffer: Float32Array[] = [];
             let voskBufferLength = 0;
-            const VOSK_CHUNK_SIZE = 16000 * 0.15;  // 0.15s (150ms) for ultra-low latency
-            const VOSK_MIN_INTERVAL = 100;        // 100ms min between sends
+            const VOSK_CHUNK_SIZE = 16000 * 0.05;  // 50ms chunks for minimum latency
+            const VOSK_MIN_INTERVAL = 30;         // 30ms min between sends (aggressive)
             let lastVoskSendTime = 0;
 
-            const WHISPER_SILENCE_THRESHOLD = 1500; // Send to Whisper after 1.5s of silence
+            const WHISPER_SILENCE_THRESHOLD = 800; // Send to Whisper after 0.8s of silence (faster refinement)
             const SPEECH_THRESHOLD = 0.001;
 
             processor.onaudioprocess = (e) => {
@@ -350,7 +350,7 @@ export function useHybridSpeechRecognition(): UseHybridSpeechRecognitionReturn {
                 const shouldSendToVosk = voskBufferLength >= VOSK_CHUNK_SIZE &&
                     (now - lastVoskSendTime) >= VOSK_MIN_INTERVAL;
 
-                if (shouldSendToVosk && rms > 0.0002 && voskWorkerRef.current) {  // Lower threshold for sensitivity
+                if (shouldSendToVosk && rms > 0.00005 && voskWorkerRef.current) {  // Very low threshold for fast detection
                     const fullBuffer = new Float32Array(voskBufferLength);
                     let offset = 0;
                     for (const b of voskBuffer) {
@@ -361,8 +361,8 @@ export function useHybridSpeechRecognition(): UseHybridSpeechRecognitionReturn {
                     voskWorkerRef.current.postMessage({ type: 'transcribe', audio: fullBuffer });
                     lastVoskSendTime = now;
 
-                    // Keep minimal overlap for continuity
-                    const overlapSamples = Math.floor(16000 * 0.05);  // 50ms overlap
+                    // Minimal overlap for continuity
+                    const overlapSamples = Math.floor(16000 * 0.02);  // 20ms overlap (minimum)
                     if (voskBufferLength > overlapSamples) {
                         const newBuffer: Float32Array[] = [];
                         let newLength = 0;
@@ -390,7 +390,7 @@ export function useHybridSpeechRecognition(): UseHybridSpeechRecognitionReturn {
 
                 // Send to Whisper after silence (for refinement)
                 if (!hasSpeech &&
-                    whisperBufferLengthRef.current > 16000 * 2 && // At least 2 seconds
+                    whisperBufferLengthRef.current > 16000 * 1.5 && // At least 1.5 seconds
                     (now - lastSpeechTimeRef.current) > WHISPER_SILENCE_THRESHOLD &&
                     !silenceTimeoutRef.current) {
 
@@ -398,7 +398,7 @@ export function useHybridSpeechRecognition(): UseHybridSpeechRecognitionReturn {
                     silenceTimeoutRef.current = setTimeout(() => {
                         sendToWhisper();
                         silenceTimeoutRef.current = null;
-                    }, 500);
+                    }, 200);
                 }
 
                 // Limit Whisper buffer size (max 30 seconds)

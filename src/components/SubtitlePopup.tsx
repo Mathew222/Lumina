@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { BROADCAST_CHANNEL_NAME } from '../utils/broadcast';
 
 // Style settings type
@@ -8,16 +8,11 @@ interface StyleSettings {
     textColor: string;
 }
 
-// Font size classes matching Dashboard
-const FONT_SIZES = {
-    sm: 'text-2xl md:text-3xl',
-    md: 'text-3xl md:text-4xl',
-    lg: 'text-4xl md:text-5xl',
-    xl: 'text-5xl md:text-6xl',
-};
+// Max characters before clearing (approximately 2 lines at full width)
+const MAX_DISPLAY_CHARS = 180;
 
 export const SubtitlePopup = () => {
-    const [text, setText] = useState('');
+    const [displayText, setDisplayText] = useState('');
     const [interim, setInterim] = useState('');
     const [style, setStyle] = useState<StyleSettings>({
         fontSize: 'md',
@@ -25,13 +20,33 @@ export const SubtitlePopup = () => {
         textColor: '#ffffff',
     });
 
+    const fullTextRef = useRef('');
+    const lastClearPointRef = useRef(0);
+
+    // When text exceeds limit, clear display and start fresh from that point
+    const updateDisplayText = useCallback((newText: string) => {
+        fullTextRef.current = newText;
+
+        // Calculate text since last clear
+        const textSinceLastClear = newText.slice(lastClearPointRef.current);
+
+        if (textSinceLastClear.length <= MAX_DISPLAY_CHARS) {
+            setDisplayText(textSinceLastClear);
+        } else {
+            // Clear and start fresh - find a good break point
+            const breakPoint = newText.lastIndexOf(' ', newText.length - 10);
+            lastClearPointRef.current = breakPoint > lastClearPointRef.current ? breakPoint + 1 : newText.length;
+            setDisplayText(newText.slice(lastClearPointRef.current));
+        }
+    }, []);
+
     useEffect(() => {
         const channel = new BroadcastChannel(BROADCAST_CHANNEL_NAME);
 
         channel.onmessage = (event) => {
             if (event.data.type === 'TRANSCRIPT') {
                 const { text: newText, interim: newInterim, style: newStyle } = event.data.payload;
-                setText(newText);
+                updateDisplayText(newText);
                 setInterim(newInterim);
                 if (newStyle) {
                     setStyle(newStyle);
@@ -46,12 +61,12 @@ export const SubtitlePopup = () => {
         return () => {
             channel.close();
         };
-    }, []);
+    }, [updateDisplayText]);
 
     useEffect(() => {
         if (window.electron) {
             const cleanup = window.electron.onTranscriptUpdate((data) => {
-                setText(data.text);
+                updateDisplayText(data.text);
                 setInterim(data.interim);
                 if (data.style) {
                     setStyle(data.style);
@@ -59,32 +74,26 @@ export const SubtitlePopup = () => {
             });
             return cleanup;
         }
-    }, []);
+    }, [updateDisplayText]);
 
     return (
         <div
-            className="flex items-end justify-center h-screen w-screen p-4 pb-12"
-            style={{ backgroundColor: style.showBackground ? 'rgba(0,0,0,0.8)' : 'transparent' }}
+            className="fixed top-0 left-0 right-0 w-screen px-12 py-4"
+            style={{
+                backgroundColor: style.showBackground ? 'rgba(0,0,0,0.85)' : 'transparent',
+                minHeight: '60px'
+            }}
         >
-            <div className="text-center max-w-5xl">
-                <p
-                    className={`${FONT_SIZES[style.fontSize]} font-sans font-bold drop-shadow-lg transition-all duration-150 ease-out leading-relaxed`}
-                    style={{ color: style.textColor }}
-                >
-                    {text}
-                    {interim && (
-                        <span
-                            className="ml-2 italic animate-pulse opacity-70"
-                            style={{ color: style.textColor }}
-                        >
-                            {interim}
-                        </span>
-                    )}
-                    {!text && !interim && (
-                        <span className="text-gray-600 text-2xl">Listening for audio...</span>
-                    )}
-                </p>
-            </div>
+            {/* Single line display - all text together */}
+            <p
+                className="text-lg md:text-xl font-sans font-medium leading-relaxed"
+                style={{ color: style.textColor }}
+            >
+                {displayText}
+                {displayText && interim && ' '}
+                {interim && <span className="italic opacity-70">{interim}</span>}
+                {!displayText && !interim && <span className="text-gray-500 text-sm">Listening...</span>}
+            </p>
         </div>
     );
 };

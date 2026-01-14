@@ -27,7 +27,7 @@ export const Dashboard = () => {
     // Text Customization State
     const [showSettingsMenu, setShowSettingsMenu] = useState(false);
     const [fontSize, setFontSize] = useState<'sm' | 'md' | 'lg' | 'xl'>('md');
-    const [showBackground, setShowBackground] = useState(false);
+    const [showBackground, setShowBackground] = useState(true);
     const [textColor, setTextColor] = useState('#e5e5e5'); // Default gray-300
 
     // Session Recording State
@@ -161,7 +161,7 @@ export const Dashboard = () => {
             });
     }, [text, targetLanguage]);
 
-    // Translate interim text with debouncing
+    // Translate interim text with debouncing - fast word-by-word for Malayalam
     useEffect(() => {
         if (targetLanguage === 'en') {
             setTranslatedInterim(interimText);
@@ -173,7 +173,7 @@ export const Dashboard = () => {
             return;
         }
 
-        // Debounce interim translation to avoid too many API calls
+        // Debounce interim translation
         if (interimTranslateTimeoutRef.current) {
             clearTimeout(interimTranslateTimeoutRef.current);
         }
@@ -186,7 +186,7 @@ export const Dashboard = () => {
                 .catch(() => {
                     setTranslatedInterim(interimText);
                 });
-        }, 75); // 75ms debounce for faster interim translation
+        }, 100); // 100ms debounce for fast translation
 
         return () => {
             if (interimTranslateTimeoutRef.current) {

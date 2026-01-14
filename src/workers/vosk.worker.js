@@ -49,16 +49,7 @@ const init = async () => {
         console.log(`[Vosk Worker] Attempting to load model from: ${MODEL_URL}`);
         self.postMessage({ type: 'debug', message: `Model path: ${MODEL_URL}` });
 
-        // Verify the tar.gz file exists
-        try {
-            const response = await fetch(MODEL_URL, { method: 'HEAD' });
-            if (!response.ok) {
-                throw new Error(`Model archive not found: ${MODEL_URL} (${response.status})`);
-            }
-            console.log('[Vosk Worker] ✓ Model archive found');
-        } catch (e) {
-            throw new Error(`Model archive not accessible: ${e.message}`);
-        }
+
 
         // Get createModel function
         const createModel = getCreateModel();

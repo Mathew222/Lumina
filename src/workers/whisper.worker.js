@@ -92,8 +92,8 @@ self.onmessage = async (event) => {
                 beam_size: 5,                 // More beams = better accuracy
                 best_of: 3,                   // Multiple candidates
                 // Standard thresholds for quality
-                no_speech_threshold: 0.6,     // Standard threshold
-                logprob_threshold: -1.0,      // Standard threshold
+                no_speech_threshold: 0.3,     // Lower threshold to catch quieter speech
+                logprob_threshold: -0.5,      // Stricter quality filtering
             });
 
             const end = performance.now();
