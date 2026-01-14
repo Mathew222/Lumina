@@ -40,37 +40,6 @@ const init = async () => {
         console.log('[Worker] Loading model...');
         self.postMessage({ type: 'debug', message: 'Loading Model...' });
 
-        // DEBUG: Verify critical files exist
-        const filesToCheck = [
-            '/models/whisper-base.en/config.json',
-            '/models/whisper-base.en/tokenizer.json',
-            '/models/whisper-base.en/vocab.json',
-            '/models/whisper-base.en/preprocessor_config.json',
-            '/models/whisper-base.en/special_tokens_map.json',
-            '/models/whisper-base.en/encoder_model_quantized.onnx',
-            '/models/whisper-base.en/decoder_model_quantized.onnx',
-            '/models/whisper-base.en/decoder_model_merged_quantized.onnx',
-            '/ort-wasm-simd.wasm'
-        ];
-
-        for (const url of filesToCheck) {
-            try {
-                const resp = await fetch(url);
-                const type = resp.headers.get('content-type');
-                if (!resp.ok || (type && type.includes('text/html'))) {
-                    throw new Error(`File not found (HTML fallback): ${url}`);
-                }
-                console.log(`[Worker] Checked ${url}: OK`);
-            } catch (e) {
-                throw new Error(`Missing request file: ${url} error: ${e.message}`);
-            }
-        }
-
-        // Log worker context info
-        console.log('[Worker] self.location:', self.location);
-        console.log('[Worker] self.location.origin:', self.location.origin);
-        console.log('[Worker] self.location.href:', self.location.href);
-
         // Use just the model name since localModelPath is set to /models/
         const P_MODEL_PATH = 'whisper-base.en';
 
