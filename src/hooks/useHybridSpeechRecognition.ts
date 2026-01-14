@@ -61,28 +61,27 @@ export function useHybridSpeechRecognition(): UseHybridSpeechRecognitionReturn {
         isModelLoadingRef.current = isModelLoading;
     }, [isModelLoading]);
 
-    // Check if at least one engine is ready (graceful degradation)
+    // Start as soon as Vosk is ready (fast) - don't wait for Whisper (slow)
     useEffect(() => {
-        const bothReady = engineStatus.vosk === 'ready' && engineStatus.whisper === 'ready';
-        const atLeastOneReady = engineStatus.vosk === 'ready' || engineStatus.whisper === 'ready';
-        const bothDone = engineStatus.vosk !== 'loading' && engineStatus.whisper !== 'loading';
-
-        if (bothReady) {
-            // Both engines ready - optimal hybrid mode
+        // Vosk-first approach: start immediately when Vosk is ready
+        if (engineStatus.vosk === 'ready') {
             setIsModelLoading(false);
             setError(null);
-        } else if (atLeastOneReady && bothDone) {
-            // At least one engine ready, other failed - graceful degradation
-            setIsModelLoading(false);
-            // Don't set error - we can still operate with one engine
-            const workingEngine = engineStatus.vosk === 'ready' ? 'Vosk' : 'Whisper';
-            const failedEngine = engineStatus.vosk === 'error' ? 'Vosk' : 'Whisper';
-            console.log(`[Hybrid] Running with ${workingEngine} only (${failedEngine} failed)`);
-        } else if (bothDone && !atLeastOneReady) {
-            // Both engines failed
-            setIsModelLoading(false);
-            setError('Both speech engines failed to load');
+            console.log('[Hybrid] Vosk ready - starting immediately (Whisper will load in background)');
+        } else if (engineStatus.vosk === 'error') {
+            // Vosk failed, fall back to waiting for Whisper
+            if (engineStatus.whisper === 'ready') {
+                setIsModelLoading(false);
+                setError(null);
+                console.log('[Hybrid] Running with Whisper only (Vosk failed)');
+            } else if (engineStatus.whisper === 'error') {
+                // Both engines failed
+                setIsModelLoading(false);
+                setError('Both speech engines failed to load');
+            }
+            // else: still waiting for Whisper
         }
+        // else: still waiting for Vosk (don't wait for Whisper)
     }, [engineStatus]);
 
     // Initialize both workers
