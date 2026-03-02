@@ -305,7 +305,7 @@ export function useHybridSpeechRecognition(): UseHybridSpeechRecognitionReturn {
             const VOSK_MIN_INTERVAL = 30;         // 30ms min between sends (aggressive)
             let lastVoskSendTime = 0;
 
-            const WHISPER_SILENCE_THRESHOLD = 800; // Send to Whisper after 0.8s of silence (faster refinement)
+            const WHISPER_SILENCE_THRESHOLD = 500; // Send to Whisper after 0.5s of silence (faster refinement)
             const SPEECH_THRESHOLD = 0.001;
 
             processor.onaudioprocess = (e) => {
