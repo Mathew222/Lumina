@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Mic, Globe, ChevronDown, Settings, Type, Palette, Circle, Square, History, Key, Sparkles, X } from 'lucide-react';
+import { Mic, Globe, ChevronDown, Settings, Type, Palette, Circle, Square, History, Key, Sparkles, X, Volume2, VolumeX, Gauge } from 'lucide-react';
+import { useMalayalamTTS } from '../hooks/useMalayalamTTS';
 import { useHybridSpeechRecognition } from '../hooks/useHybridSpeechRecognition';
 import { BROADCAST_CHANNEL_NAME, sendMessage } from '../utils/broadcast';
 import { translateText, translateInterim, LANGUAGES, clearTranslationContext } from '../utils/translate';
@@ -12,6 +13,7 @@ import { SessionHistory } from './SessionHistory';
 
 export const Dashboard = () => {
     const { text, interimText, isListening, startListening, stopListening, error, audioLevel, isModelLoading, reloadModel, engineStatus } = useHybridSpeechRecognition();
+    const tts = useMalayalamTTS();
     const channelRef = useRef<BroadcastChannel | null>(null);
 
     // Language state
@@ -74,6 +76,24 @@ export const Dashboard = () => {
 
     // Debounce ref for interim translation
     const interimTranslateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // Auto-speak final translated text when Malayalam dubbing is enabled
+    const lastSpokenTextRef = useRef('');
+    useEffect(() => {
+        if (targetLanguage !== 'ml' || !tts.isDubbingEnabled || !translatedText) return;
+        // Only speak new content (avoid re-speaking the same text)
+        if (translatedText === lastSpokenTextRef.current) return;
+        lastSpokenTextRef.current = translatedText;
+        tts.speak(translatedText);
+    }, [translatedText, targetLanguage, tts.isDubbingEnabled, tts.speak]);
+
+    // Stop speaking when switching away from Malayalam
+    useEffect(() => {
+        if (targetLanguage !== 'ml') {
+            tts.stop();
+            lastSpokenTextRef.current = '';
+        }
+    }, [targetLanguage]);
 
     // Update recording duration timer
     useEffect(() => {
@@ -317,6 +337,7 @@ export const Dashboard = () => {
         setShowLanguageMenu(false);
         // Clear context when changing language
         clearTranslationContext();
+        lastSpokenTextRef.current = '';
         // Re-translate current text
         if (text && lang !== 'en') {
             setIsTranslating(true);
@@ -545,6 +566,48 @@ export const Dashboard = () => {
                         )}
                     </div>
 
+                    {/* Malayalam Dubbing Toggle — only visible when Malayalam is selected */}
+                    {targetLanguage === 'ml' && (
+                        <div className="relative group">
+                            <button
+                                onClick={tts.toggleDubbing}
+                                title={
+                                    tts.engineStatus === 'error'
+                                        ? `TTS Error: ${tts.engineError}`
+                                        : tts.isDubbingEnabled
+                                            ? 'Dubbing ON — click to disable'
+                                            : 'Enable Malayalam audio dubbing'
+                                }
+                                className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold tracking-widest transition-all uppercase border ${tts.engineStatus === 'error'
+                                    ? 'border-red-700/50 text-red-500 cursor-help'
+                                    : tts.isDubbingEnabled
+                                        ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-400 shadow-[0_0_12px_rgba(34,211,238,0.2)]'
+                                        : 'border-gray-800 text-gray-500 hover:text-gray-300 hover:border-gray-600'
+                                    }`}
+                            >
+                                {tts.engineStatus === 'error' ? (
+                                    <>
+                                        <VolumeX className="w-4 h-4" />
+                                        <span>Dubbing</span>
+                                        <span className="text-red-500 text-[10px]">!</span>
+                                    </>
+                                ) : tts.isDubbingEnabled ? (
+                                    <>
+                                        <Volume2 className={`w-4 h-4 ${tts.isSpeaking ? 'animate-pulse' : ''}`} />
+                                        <span>Dubbing</span>
+                                        {tts.isSpeaking && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />}
+                                    </>
+                                ) : (
+                                    <>
+                                        <VolumeX className="w-4 h-4" />
+                                        <span>Dubbing</span>
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    )}
+
+
                     {/* Text Customization Settings */}
                     <div className="relative">
                         <button
@@ -685,6 +748,31 @@ export const Dashboard = () => {
                                         </button>
                                     </div>
                                 </div>
+
+                                {/* Speech Rate — only shown when Malayalam is selected */}
+                                {targetLanguage === 'ml' && (
+                                    <div className="pt-3 border-t border-gray-800">
+                                        <label className="text-xs text-gray-500 block mb-2 flex items-center gap-2">
+                                            <Gauge className="w-3 h-3" />
+                                            Dubbing Speed
+                                            <span className="ml-auto text-gray-400 font-mono">{tts.speechRate.toFixed(1)}x</span>
+                                        </label>
+                                        <input
+                                            type="range"
+                                            min="0.5"
+                                            max="2.0"
+                                            step="0.1"
+                                            value={tts.speechRate}
+                                            onChange={(e) => tts.setSpeechRate(parseFloat(e.target.value))}
+                                            className="w-full accent-cyan-500 cursor-pointer"
+                                        />
+                                        <div className="flex justify-between text-[10px] text-gray-700 mt-1">
+                                            <span>Slow</span>
+                                            <span>Normal</span>
+                                            <span>Fast</span>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
@@ -796,6 +884,23 @@ export const Dashboard = () => {
                             <div className="flex items-center gap-2">
                                 <span className="w-1.5 h-1.5 rounded-full bg-purple-500 shadow-[0_0_10px_rgba(168,85,247,0.8)]"></span>
                                 <span>Gemini</span>
+                            </div>
+                        )}
+                        {targetLanguage === 'ml' && (
+                            <div className="flex items-center gap-2" title={
+                                tts.engineStatus === 'error' ? `TTS Error: ${tts.engineError}`
+                                    : tts.engineStatus === 'speaking' ? 'Malayalam TTS speaking'
+                                        : tts.isDubbingEnabled ? 'Malayalam TTS active'
+                                            : 'Malayalam TTS ready (enable Dubbing)'
+                            }>
+                                <span className={`w-1.5 h-1.5 rounded-full ${tts.engineStatus === 'error' ? 'bg-red-500'
+                                        : tts.engineStatus === 'speaking'
+                                            ? 'bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.8)] animate-pulse'
+                                            : tts.isDubbingEnabled
+                                                ? 'bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.8)]'
+                                                : 'bg-gray-600'
+                                    }`}></span>
+                                <span className={tts.isDubbingEnabled ? 'text-cyan-400' : ''}>TTS</span>
                             </div>
                         )}
                     </div>

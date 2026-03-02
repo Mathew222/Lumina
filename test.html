@@ -1,0 +1,40 @@
+
+    <html><body>
+    <h1>Muted WebContents Capture Test</h1>
+    <video id="vid" src="https://www.w3schools.com/html/mov_bbb.mp4" loop autoplay controls></video>
+    <script>
+        setTimeout(async () => {
+            try {
+                console.log('Requesting capture of webContents: 1');
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        mandatory: {
+                            chromeMediaSource: 'desktop',
+                            chromeMediaSourceId: 'webcontents:1'
+                        }
+                    },
+                    video: false
+                });
+                console.log('Stream acquired!', stream);
+                
+                const ctx = new AudioContext();
+                const sourceNode = ctx.createMediaStreamSource(stream);
+                const analyzer = ctx.createAnalyser();
+                sourceNode.connect(analyzer);
+                
+                const data = new Uint8Array(analyzer.frequencyBinCount);
+                setInterval(() => {
+                    analyzer.getByteFrequencyData(data);
+                    const sum = data.reduce((a, b) => a + b, 0);
+                    console.log('Audio volume:', sum);
+                    if (sum > 0) {
+                        require('electron').ipcRenderer.send('test-passed');
+                    }
+                }, 500);
+            } catch (e) {
+                console.error('Capture failed:', e);
+            }
+        }, 2000);
+    </script>
+    </body></html>
+    
