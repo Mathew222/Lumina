@@ -9,6 +9,8 @@ export interface UseHybridSpeechRecognitionReturn {
     hasSupport: boolean;
     error: string | null;
     audioLevel: number;
+    monitorVolume: number;
+    setMonitorVolume: (volume: number) => void;
     isModelLoading: boolean;
     reloadModel: () => void;
     engineStatus: {
@@ -30,6 +32,7 @@ export function useHybridSpeechRecognition(): UseHybridSpeechRecognitionReturn {
     const [isListening, setIsListening] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [audioLevel, setAudioLevel] = useState(0);
+    const [monitorVolume, setMonitorVolume] = useState(0); // Default to muted
     const [isModelLoading, setIsModelLoading] = useState(true);
     const [engineStatus, setEngineStatus] = useState<{
         vosk: 'loading' | 'ready' | 'error';
@@ -44,6 +47,14 @@ export function useHybridSpeechRecognition(): UseHybridSpeechRecognitionReturn {
     const audioContextRef = useRef<AudioContext | null>(null);
     const processorRef = useRef<ScriptProcessorNode | null>(null);
     const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+    const monitorGainRef = useRef<GainNode | null>(null);
+
+    // Update gain value when monitorVolume changes
+    useEffect(() => {
+        if (monitorGainRef.current && audioContextRef.current) {
+            monitorGainRef.current.gain.setTargetAtTime(monitorVolume, audioContextRef.current.currentTime, 0.05);
+        }
+    }, [monitorVolume]);
 
     // Buffer for Whisper refinement
     const whisperBufferRef = useRef<Float32Array[]>([]);
@@ -192,6 +203,7 @@ export function useHybridSpeechRecognition(): UseHybridSpeechRecognitionReturn {
     const stopListening = useCallback(() => {
         sourceRef.current?.disconnect();
         processorRef.current?.disconnect();
+        monitorGainRef.current?.disconnect();
         audioContextRef.current?.close();
         setIsListening(false);
         setAudioLevel(0);
@@ -298,6 +310,21 @@ export function useHybridSpeechRecognition(): UseHybridSpeechRecognitionReturn {
 
             const processor = audioContext.createScriptProcessor(512, 1, 1);  // 32ms buffer for ultra-low latency
             processorRef.current = processor;
+
+            // Monitoring Gain Node - for controlled loopback
+            const monitorGain = audioContext.createGain();
+            monitorGain.gain.value = monitorVolume;
+            monitorGainRef.current = monitorGain;
+
+            // Connect raw source to the monitor gain, and monitor gain to speakers
+            source.connect(monitorGain);
+            monitorGain.connect(audioContext.destination);
+
+            // Dummy silent gain to ensure processor events fire in Chrome
+            const dummyGain = audioContext.createGain();
+            dummyGain.gain.value = 0;
+            processor.connect(dummyGain);
+            dummyGain.connect(audioContext.destination);
 
             let voskBuffer: Float32Array[] = [];
             let voskBufferLength = 0;
@@ -418,13 +445,6 @@ export function useHybridSpeechRecognition(): UseHybridSpeechRecognitionReturn {
             };
 
             source.connect(processor);
-            processor.connect(audioContext.destination);
-
-            // Mute output
-            const gain = audioContext.createGain();
-            gain.gain.value = 0;
-            processor.connect(gain);
-            gain.connect(audioContext.destination);
 
             setIsListening(true);
         } catch (e: any) {
@@ -432,7 +452,7 @@ export function useHybridSpeechRecognition(): UseHybridSpeechRecognitionReturn {
             setError("Audio Error: " + e.message);
             setIsListening(false);
         }
-    }, [sendToWhisper]);
+    }, [sendToWhisper, monitorVolume]);
 
     return {
         text,
@@ -443,8 +463,11 @@ export function useHybridSpeechRecognition(): UseHybridSpeechRecognitionReturn {
         hasSupport: true,
         error,
         audioLevel,
+        monitorVolume,
+        setMonitorVolume,
         isModelLoading,
         reloadModel,
         engineStatus,
     };
 }
+

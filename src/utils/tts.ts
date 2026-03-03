@@ -1,129 +1,209 @@
 /**
- * TTS (Text-to-Speech) Utility — Google Translate Audio
+ * TTS (Text-to-Speech) Utility
  *
- * Uses the same free Google Translate TTS endpoint (no API key, no model download).
- * Returns an MP3 audio blob which we decode and play via the Web Audio API.
+ * Primary: Microsoft Edge Neural TTS (via Electron IPC)
+ *   - en: en-US-AriaNeural (very human, conversational)
+ *   - ml: ml-IN-SobhanaNeural (natural Malayalam female voice)
  *
- * It works exactly the same as the translate.ts approach — just the audio endpoint.
+ * Fallback 1 (Malayalam): Meta MMS offline model (tts.worker.js)
+ * Fallback 2: Web Speech API
  */
 
+// ────────────────────────────────────────────────
+// Audio Context
+// ────────────────────────────────────────────────
 let audioCtx: AudioContext | null = null;
 let currentSource: AudioBufferSourceNode | null = null;
 
 function getAudioContext(): AudioContext {
-    if (!audioCtx || audioCtx.state === 'closed') {
-        audioCtx = new AudioContext();
-    }
+    if (!audioCtx || audioCtx.state === 'closed') audioCtx = new AudioContext();
     return audioCtx;
 }
 
-/**
- * Fetch Malayalam audio for the given text from Google Translate TTS.
- * Splits long text into <=200-char chunks (API limit).
- */
-async function fetchGoogleTTSAudio(text: string): Promise<AudioBuffer> {
-    const ctx = getAudioContext();
+// ────────────────────────────────────────────────
+// Edge TTS voice map
+// ────────────────────────────────────────────────
+const EDGE_VOICE_MAP: Record<string, string> = {
+    'en': 'en-US-AriaNeural',
+    'ml': 'ml-IN-SobhanaNeural',
+    'hi': 'hi-IN-SwaraNeural',
+    'ta': 'ta-IN-PallaviNeural',
+    'te': 'te-IN-ShrutiNeural',
+    'kn': 'kn-IN-SapnaNeural',
+    'fr': 'fr-FR-DeniseNeural',
+    'de': 'de-DE-KatjaNeural',
+    'es': 'es-ES-ElviraNeural',
+    'ja': 'ja-JP-NanamiNeural',
+    'zh': 'zh-CN-XiaoxiaoNeural',
+};
 
-    // Chunk text to stay within the API's length limit
-    const chunks = splitIntoChunks(text.trim(), 200);
-    const allBuffers: AudioBuffer[] = [];
-
-    for (const chunk of chunks) {
-        if (!chunk.trim()) continue;
-        // Use googleapis.com — same domain as the translation API, works in Electron without CORS issues
-        const url = `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=ml&total=1&idx=0&textlen=${chunk.length}&client=gtx`;
-
-        const response = await fetch(url);
-
-        if (!response.ok) {
-            throw new Error(`TTS fetch failed: ${response.status}`);
-        }
-
-        const arrayBuffer = await response.arrayBuffer();
-        const decoded = await ctx.decodeAudioData(arrayBuffer);
-        allBuffers.push(decoded);
-    }
-
-    if (allBuffers.length === 0) throw new Error('No audio data');
-    if (allBuffers.length === 1) return allBuffers[0];
-
-    // Concatenate all chunks into one buffer
-    const totalLength = allBuffers.reduce((acc, b) => acc + b.length, 0);
-    const combined = ctx.createBuffer(1, totalLength, allBuffers[0].sampleRate);
-    const channelData = combined.getChannelData(0);
-    let offset = 0;
-    for (const buf of allBuffers) {
-        channelData.set(buf.getChannelData(0), offset);
-        offset += buf.length;
-    }
-    return combined;
+function getEdgeVoice(lang: string): string {
+    return EDGE_VOICE_MAP[lang] || 'en-US-AriaNeural';
 }
 
-function splitIntoChunks(text: string, maxLen: number): string[] {
-    if (text.length <= maxLen) return [text];
-    const chunks: string[] = [];
-    // Try to split on sentence boundaries
-    const sentences = text.match(/[^.!?]+[.!?]*/g) || [text];
-    let current = '';
-    for (const s of sentences) {
-        if ((current + s).length > maxLen) {
-            if (current) chunks.push(current.trim());
-            current = s;
-        } else {
-            current += s;
-        }
-    }
-    if (current.trim()) chunks.push(current.trim());
-    return chunks;
+// ────────────────────────────────────────────────
+// Meta MMS Worker (Malayalam offline fallback)
+// ────────────────────────────────────────────────
+let mmsWorker: Worker | null = null;
+let mmsReady = false;
+let mmsReadyCallbacks: Array<() => void> = [];
+
+function ensureMMSWorker(): Promise<void> {
+    return new Promise((resolve) => {
+        if (mmsReady) { resolve(); return; }
+        if (mmsReadyCallbacks.length > 0) { mmsReadyCallbacks.push(resolve); return; }
+        mmsReadyCallbacks.push(resolve);
+        mmsWorker = new Worker(new URL('./tts.worker.js', import.meta.url), { type: 'module' });
+        mmsWorker.onmessage = (e) => {
+            if (e.data.type === 'ready') {
+                mmsReady = true;
+                mmsReadyCallbacks.forEach(cb => cb());
+                mmsReadyCallbacks = [];
+            }
+        };
+        mmsWorker.postMessage({ type: 'init' });
+    });
 }
 
+function speakWithMMS(
+    text: string, rate: number,
+    onStart?: () => void, onEnd?: () => void, onError?: (e: Error) => void
+): Promise<void> {
+    return new Promise(async (resolve) => {
+        try { await ensureMMSWorker(); } catch (e: any) { if (onError) onError(e); resolve(); return; }
+        const worker = mmsWorker!;
+        const ctx = getAudioContext();
+        const handler = async (event: MessageEvent) => {
+            const { type, audio, samplingRate, error } = event.data;
+            if (type === 'audio') {
+                worker.removeEventListener('message', handler);
+                if (ctx.state === 'suspended') await ctx.resume();
+                const buf = ctx.createBuffer(1, audio.length, samplingRate);
+                buf.getChannelData(0).set(audio);
+                const source = ctx.createBufferSource();
+                source.buffer = buf;
+                source.playbackRate.value = rate;
+                source.connect(ctx.destination);
+                source.onended = () => { currentSource = null; if (onEnd) onEnd(); resolve(); };
+                currentSource = source;
+                if (onStart) onStart();
+                source.start(0);
+            } else if (type === 'error' || type === 'done') {
+                worker.removeEventListener('message', handler);
+                if (type === 'error' && onError) onError(new Error(error));
+                else if (onEnd) onEnd();
+                resolve();
+            }
+        };
+        worker.addEventListener('message', handler);
+        worker.postMessage({ type: 'speak', text });
+    });
+}
+
+// ────────────────────────────────────────────────
+// Edge TTS via Electron IPC
+// ────────────────────────────────────────────────
+async function speakWithEdgeTTS(
+    text: string, lang: string, rate: number,
+    onStart?: () => void, onEnd?: () => void, onError?: (e: Error) => void
+): Promise<boolean> {
+    const electron = (window as any).electron;
+    if (!electron?.synthesizeEdgeTTS) return false;
+
+    try {
+        const voice = getEdgeVoice(lang);
+        const arrayBuffer: ArrayBuffer = await electron.synthesizeEdgeTTS(text, voice);
+        const ctx = getAudioContext();
+        if (ctx.state === 'suspended') await ctx.resume();
+        const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
+        const source = ctx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.playbackRate.value = rate;
+        source.connect(ctx.destination);
+        source.onended = () => { currentSource = null; if (onEnd) onEnd(); };
+        currentSource = source;
+        if (onStart) onStart();
+        source.start(0);
+        return true;
+    } catch (err: any) {
+        console.warn('[TTS] Edge TTS failed:', err.message);
+        if (onError) onError(err instanceof Error ? err : new Error(String(err)));
+        return false;
+    }
+}
+
+// ────────────────────────────────────────────────
+// Web Speech API final fallback
+// ────────────────────────────────────────────────
+function speakWithWebSpeech(
+    text: string, lang: string, rate: number,
+    onStart?: () => void, onEnd?: () => void, onError?: (e: Error) => void
+): Promise<void> {
+    return new Promise((resolve) => {
+        const utter = new SpeechSynthesisUtterance(text);
+        utter.rate = rate;
+        utter.lang = lang === 'ml' ? 'ml-IN' : lang === 'en' ? 'en-US' : lang;
+        const voices = window.speechSynthesis.getVoices();
+        const voice = voices.find(v => v.lang.startsWith(utter.lang)) || voices[0];
+        if (voice) utter.voice = voice;
+        utter.onstart = () => { if (onStart) onStart(); };
+        utter.onend = () => { if (onEnd) onEnd(); resolve(); };
+        utter.onerror = (e) => { if (onError) onError(new Error(e.error)); resolve(); };
+        window.speechSynthesis.speak(utter);
+    });
+}
+
+// ────────────────────────────────────────────────
+// Main API
+// ────────────────────────────────────────────────
+
 /**
- * Speak text using Google Translate TTS.
- * Cancels any current audio, fetches the MP3, and plays it.
+ * Speaks text using the best available TTS engine.
+ * 1. Microsoft Edge Neural TTS (human quality, supports ML + EN)
+ * 2. Meta MMS offline model (Malayalam only)
+ * 3. Web Speech API
  */
-export async function speakMalayalam(
+export async function speakText(
     text: string,
+    lang: string = 'ml',
     rate: number = 0.9,
+    onStart?: () => void,
     onEnd?: () => void,
     onError?: (e: Error) => void
 ): Promise<void> {
     stopAudio();
-    const ctx = getAudioContext();
+    if (!text.trim()) return;
 
-    try {
-        if (ctx.state === 'suspended') await ctx.resume();
+    // Try Edge TTS first (best quality)
+    const edgeSuccess = await speakWithEdgeTTS(text, lang, rate, onStart, onEnd, onError);
+    if (edgeSuccess) return;
 
-        const audioBuffer = await fetchGoogleTTSAudio(text);
+    // For Malayalam: fallback to offline Meta MMS
+    if (lang === 'ml') {
+        await speakWithMMS(text, rate, onStart, onEnd, onError);
+        return;
+    }
 
-        const source = ctx.createBufferSource();
-        source.buffer = audioBuffer;
-        source.playbackRate.value = rate; // Adjust speed post-fetch
-        source.connect(ctx.destination);
-        source.onended = () => {
-            currentSource = null;
-            if (onEnd) onEnd();
-        };
-        currentSource = source;
-        source.start(0);
-    } catch (err: any) {
-        currentSource = null;
-        if (onError) onError(err);
+    // Final fallback: Web Speech API
+    if ('speechSynthesis' in window) {
+        if (window.speechSynthesis.getVoices().length === 0) {
+            await new Promise<void>(r => { window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.onvoiceschanged = null; r(); }; });
+        }
+        await speakWithWebSpeech(text, lang, rate, onStart, onEnd, onError);
     }
 }
 
-/**
- * Stop any currently playing TTS audio.
- */
 export function stopAudio(): void {
     if (currentSource) {
-        try { currentSource.stop(); } catch { /* already stopped */ }
+        try { currentSource.stop(); } catch { /* ignored */ }
         currentSource = null;
     }
+    if ('speechSynthesis' in window && (window.speechSynthesis.speaking || window.speechSynthesis.pending)) {
+        window.speechSynthesis.cancel();
+    }
+    if (mmsWorker) mmsWorker.postMessage({ type: 'cancel' });
 }
 
-/**
- * Returns true if audio is currently playing.
- */
 export function isAudioPlaying(): boolean {
-    return currentSource !== null;
+    return currentSource !== null || window.speechSynthesis.speaking;
 }

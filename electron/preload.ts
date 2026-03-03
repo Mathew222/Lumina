@@ -13,5 +13,15 @@ contextBridge.exposeInMainWorld('electron', {
     // Get audio sources via IPC from main process (more secure and reliable)
     getAudioSources: async () => {
         return await ipcRenderer.invoke('get-audio-sources');
+    },
+    // Fetch TTS audio through main process to bypass COEP restrictions
+    fetchTTSAudio: async (url: string): Promise<ArrayBuffer> => {
+        const buffer: Buffer = await ipcRenderer.invoke('fetch-tts-audio', url);
+        return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
+    },
+    // Microsoft Edge Neural TTS
+    synthesizeEdgeTTS: async (text: string, voice: string): Promise<ArrayBuffer> => {
+        const buffer: Buffer = await ipcRenderer.invoke('synthesize-edge-tts', { text, voice });
+        return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
     }
 });

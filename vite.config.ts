@@ -13,6 +13,18 @@ export default defineConfig({
       'Cross-Origin-Embedder-Policy': 'require-corp',
       'Cross-Origin-Opener-Policy': 'same-origin',
     },
+    // Proxy Google TTS requests to bypass COEP in Electron renderer
+    proxy: {
+      '/tts-proxy': {
+        target: 'https://translate.google.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/tts-proxy/, '/translate_tts'),
+        headers: {
+          'Referer': 'https://translate.google.com/',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        },
+      },
+    },
   },
   // Ensure model files are served correctly
   publicDir: 'public',
@@ -20,3 +32,4 @@ export default defineConfig({
     exclude: ['vosk'],
   },
 })
+

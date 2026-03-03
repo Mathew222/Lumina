@@ -12,7 +12,7 @@ import { SummaryView } from './SummaryView';
 import { SessionHistory } from './SessionHistory';
 
 export const Dashboard = () => {
-    const { text, interimText, isListening, startListening, stopListening, error, audioLevel, isModelLoading, reloadModel, engineStatus } = useHybridSpeechRecognition();
+    const { text, interimText, isListening, startListening, stopListening, error, audioLevel, setMonitorVolume, isModelLoading, reloadModel, engineStatus } = useHybridSpeechRecognition();
     const tts = useMalayalamTTS();
     const channelRef = useRef<BroadcastChannel | null>(null);
 
@@ -56,6 +56,11 @@ export const Dashboard = () => {
     const [showApiKeyInput, setShowApiKeyInput] = useState(false);
     const [summaryLanguage, setSummaryLanguage] = useState<'en' | 'ml'>('en'); // en = English, ml = Malayalam
 
+    // Audio Monitoring State
+    const [isMonitoring, setIsMonitoring] = useState(false);
+    const [autoDucking, setAutoDucking] = useState(true);
+    const [monitorSliderVolume, setMonitorSliderVolume] = useState(0.5); // User's preferred monitoring volume
+
     // Preset colors for text
     const TEXT_COLORS = [
         { name: 'White', value: '#ffffff' },
@@ -77,23 +82,35 @@ export const Dashboard = () => {
     // Debounce ref for interim translation
     const interimTranslateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // Auto-speak final translated text when Malayalam dubbing is enabled
+    // Auto-speak final translated text when dubbing is enabled
     const lastSpokenTextRef = useRef('');
     useEffect(() => {
-        if (targetLanguage !== 'ml' || !tts.isDubbingEnabled || !translatedText) return;
+        if (!tts.isDubbingEnabled || !translatedText) return;
         // Only speak new content (avoid re-speaking the same text)
         if (translatedText === lastSpokenTextRef.current) return;
         lastSpokenTextRef.current = translatedText;
-        tts.speak(translatedText);
+        tts.speak(translatedText, targetLanguage);
     }, [translatedText, targetLanguage, tts.isDubbingEnabled, tts.speak]);
 
-    // Stop speaking when switching away from Malayalam
+    // Stop speaking when switching language (optional, but keep for consistency)
     useEffect(() => {
-        if (targetLanguage !== 'ml') {
-            tts.stop();
-            lastSpokenTextRef.current = '';
-        }
+        tts.stop();
+        lastSpokenTextRef.current = '';
     }, [targetLanguage]);
+
+    // Auto-Ducking Logic
+    useEffect(() => {
+        if (!isMonitoring) {
+            setMonitorVolume(0);
+            return;
+        }
+        // Duck when TTS is speaking
+        if (autoDucking && tts.isSpeaking) {
+            setMonitorVolume(0);
+        } else {
+            setMonitorVolume(monitorSliderVolume);
+        }
+    }, [isMonitoring, autoDucking, tts.isSpeaking, setMonitorVolume, monitorSliderVolume]);
 
     // Update recording duration timer
     useEffect(() => {
@@ -566,46 +583,44 @@ export const Dashboard = () => {
                         )}
                     </div>
 
-                    {/* Malayalam Dubbing Toggle — only visible when Malayalam is selected */}
-                    {targetLanguage === 'ml' && (
-                        <div className="relative group">
-                            <button
-                                onClick={tts.toggleDubbing}
-                                title={
-                                    tts.engineStatus === 'error'
-                                        ? `TTS Error: ${tts.engineError}`
-                                        : tts.isDubbingEnabled
-                                            ? 'Dubbing ON — click to disable'
-                                            : 'Enable Malayalam audio dubbing'
-                                }
-                                className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold tracking-widest transition-all uppercase border ${tts.engineStatus === 'error'
-                                    ? 'border-red-700/50 text-red-500 cursor-help'
+                    {/* Dubbing Toggle */}
+                    <div className="relative group">
+                        <button
+                            onClick={tts.toggleDubbing}
+                            title={
+                                tts.engineStatus === 'error'
+                                    ? `TTS Error: ${tts.engineError}`
                                     : tts.isDubbingEnabled
-                                        ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-400 shadow-[0_0_12px_rgba(34,211,238,0.2)]'
-                                        : 'border-gray-800 text-gray-500 hover:text-gray-300 hover:border-gray-600'
-                                    }`}
-                            >
-                                {tts.engineStatus === 'error' ? (
-                                    <>
-                                        <VolumeX className="w-4 h-4" />
-                                        <span>Dubbing</span>
-                                        <span className="text-red-500 text-[10px]">!</span>
-                                    </>
-                                ) : tts.isDubbingEnabled ? (
-                                    <>
-                                        <Volume2 className={`w-4 h-4 ${tts.isSpeaking ? 'animate-pulse' : ''}`} />
-                                        <span>Dubbing</span>
-                                        {tts.isSpeaking && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />}
-                                    </>
-                                ) : (
-                                    <>
-                                        <VolumeX className="w-4 h-4" />
-                                        <span>Dubbing</span>
-                                    </>
-                                )}
-                            </button>
-                        </div>
-                    )}
+                                        ? 'Dubbing ON — click to disable'
+                                        : `Enable ${currentLanguage?.nativeName} audio dubbing`
+                            }
+                            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold tracking-widest transition-all uppercase border ${tts.engineStatus === 'error'
+                                ? 'border-red-700/50 text-red-500 cursor-help'
+                                : tts.isDubbingEnabled
+                                    ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-400 shadow-[0_0_12px_rgba(34,211,238,0.2)]'
+                                    : 'border-gray-800 text-gray-500 hover:text-gray-300 hover:border-gray-600'
+                                }`}
+                        >
+                            {tts.engineStatus === 'error' ? (
+                                <>
+                                    <VolumeX className="w-4 h-4" />
+                                    <span>Dubbing</span>
+                                    <span className="text-red-500 text-[10px]">!</span>
+                                </>
+                            ) : tts.isDubbingEnabled ? (
+                                <>
+                                    <Volume2 className={`w-4 h-4 ${tts.isSpeaking ? 'animate-pulse' : ''}`} />
+                                    <span>Dubbing</span>
+                                    {tts.isSpeaking && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />}
+                                </>
+                            ) : (
+                                <>
+                                    <VolumeX className="w-4 h-4" />
+                                    <span>Dubbing</span>
+                                </>
+                            )}
+                        </button>
+                    </div>
 
 
                     {/* Text Customization Settings */}
@@ -622,8 +637,63 @@ export const Dashboard = () => {
                             <div className="absolute top-full right-0 mt-2 bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-2xl z-50 w-72 p-4">
                                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4 flex items-center gap-2">
                                     <Type className="w-4 h-4" />
-                                    Text Customization
+                                    Text & Audio Settings
                                 </h3>
+
+                                {/* Audio Monitoring Toggle */}
+                                <div className="mb-4">
+                                    <label className="text-xs text-gray-500 block mb-2 flex items-center gap-2">
+                                        <Volume2 className="w-3 h-3" />
+                                        Audio Monitoring
+                                    </label>
+                                    <div className="flex gap-2 mb-2">
+                                        <button
+                                            onClick={() => setIsMonitoring(!isMonitoring)}
+                                            className={`flex-1 py-2 rounded-lg text-xs font-bold uppercase transition-colors flex items-center justify-center gap-2 ${isMonitoring
+                                                ? 'bg-cyan-600 text-white'
+                                                : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                                                }`}
+                                        >
+                                            {isMonitoring ? 'Monitor On' : 'Monitor Off'}
+                                        </button>
+                                        <button
+                                            onClick={() => setAutoDucking(!autoDucking)}
+                                            className={`flex-1 py-2 rounded-lg text-xs font-bold uppercase transition-colors flex items-center justify-center gap-2 ${autoDucking
+                                                ? 'bg-purple-600 text-white'
+                                                : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                                                }`}
+                                        >
+                                            {autoDucking ? 'Auto-Duck On' : 'Auto-Duck Off'}
+                                        </button>
+                                    </div>
+                                    {isMonitoring && (
+                                        <div className="mt-2">
+                                            <div className="flex justify-between text-[10px] text-gray-500 mb-1">
+                                                <span>Monitor Volume</span>
+                                                <span>{Math.round(monitorSliderVolume * 100)}%</span>
+                                            </div>
+                                            <input
+                                                type="range"
+                                                min="0"
+                                                max="1"
+                                                step="0.05"
+                                                value={monitorSliderVolume}
+                                                onChange={(e) => {
+                                                    const v = parseFloat(e.target.value);
+                                                    setMonitorSliderVolume(v);
+                                                    // Only immediately update gain if not currently ducking
+                                                    if (isMonitoring && !(autoDucking && tts.isSpeaking)) {
+                                                        setMonitorVolume(v);
+                                                    }
+                                                }}
+                                                className="w-full h-1 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                                            />
+                                        </div>
+                                    )}
+                                    <p className="text-[9px] text-gray-600 mt-2 leading-tight">
+                                        * Mute the source application (Chrome/VLC) when using Monitor to avoid echo.
+                                    </p>
+                                </div>
 
                                 {/* Font Size */}
                                 <div className="mb-4">
@@ -749,30 +819,27 @@ export const Dashboard = () => {
                                     </div>
                                 </div>
 
-                                {/* Speech Rate — only shown when Malayalam is selected */}
-                                {targetLanguage === 'ml' && (
-                                    <div className="pt-3 border-t border-gray-800">
-                                        <label className="text-xs text-gray-500 block mb-2 flex items-center gap-2">
-                                            <Gauge className="w-3 h-3" />
-                                            Dubbing Speed
-                                            <span className="ml-auto text-gray-400 font-mono">{tts.speechRate.toFixed(1)}x</span>
-                                        </label>
-                                        <input
-                                            type="range"
-                                            min="0.5"
-                                            max="2.0"
-                                            step="0.1"
-                                            value={tts.speechRate}
-                                            onChange={(e) => tts.setSpeechRate(parseFloat(e.target.value))}
-                                            className="w-full accent-cyan-500 cursor-pointer"
-                                        />
-                                        <div className="flex justify-between text-[10px] text-gray-700 mt-1">
-                                            <span>Slow</span>
-                                            <span>Normal</span>
-                                            <span>Fast</span>
-                                        </div>
+                                <div className="pt-3 border-t border-gray-800">
+                                    <label className="text-xs text-gray-500 block mb-2 flex items-center gap-2">
+                                        <Gauge className="w-3 h-3" />
+                                        Dubbing Speed
+                                        <span className="ml-auto text-gray-400 font-mono">{tts.speechRate.toFixed(1)}x</span>
+                                    </label>
+                                    <input
+                                        type="range"
+                                        min="0.5"
+                                        max="2.0"
+                                        step="0.1"
+                                        value={tts.speechRate}
+                                        onChange={(e) => tts.setSpeechRate(parseFloat(e.target.value))}
+                                        className="w-full accent-cyan-500 cursor-pointer"
+                                    />
+                                    <div className="flex justify-between text-[10px] text-gray-700 mt-1">
+                                        <span>Slow</span>
+                                        <span>Normal</span>
+                                        <span>Fast</span>
                                     </div>
-                                )}
+                                </div>
                             </div>
                         )}
                     </div>
@@ -886,23 +953,21 @@ export const Dashboard = () => {
                                 <span>Gemini</span>
                             </div>
                         )}
-                        {targetLanguage === 'ml' && (
-                            <div className="flex items-center gap-2" title={
-                                tts.engineStatus === 'error' ? `TTS Error: ${tts.engineError}`
-                                    : tts.engineStatus === 'speaking' ? 'Malayalam TTS speaking'
-                                        : tts.isDubbingEnabled ? 'Malayalam TTS active'
-                                            : 'Malayalam TTS ready (enable Dubbing)'
-                            }>
-                                <span className={`w-1.5 h-1.5 rounded-full ${tts.engineStatus === 'error' ? 'bg-red-500'
-                                        : tts.engineStatus === 'speaking'
-                                            ? 'bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.8)] animate-pulse'
-                                            : tts.isDubbingEnabled
-                                                ? 'bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.8)]'
-                                                : 'bg-gray-600'
-                                    }`}></span>
-                                <span className={tts.isDubbingEnabled ? 'text-cyan-400' : ''}>TTS</span>
-                            </div>
-                        )}
+                        <div className="flex items-center gap-2" title={
+                            tts.engineStatus === 'error' ? `TTS Error: ${tts.engineError}`
+                                : tts.engineStatus === 'speaking' ? `${currentLanguage?.name} TTS speaking`
+                                    : tts.isDubbingEnabled ? `${currentLanguage?.name} TTS active`
+                                        : `${currentLanguage?.name} TTS ready (enable Dubbing)`
+                        }>
+                            <span className={`w-1.5 h-1.5 rounded-full ${tts.engineStatus === 'error' ? 'bg-red-500'
+                                : tts.engineStatus === 'speaking'
+                                    ? 'bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.8)] animate-pulse'
+                                    : tts.isDubbingEnabled
+                                        ? 'bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.8)]'
+                                        : 'bg-gray-600'
+                                }`}></span>
+                            <span className={tts.isDubbingEnabled ? 'text-cyan-400' : ''}>TTS</span>
+                        </div>
                     </div>
                 </div>
             </footer>

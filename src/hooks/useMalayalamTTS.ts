@@ -1,26 +1,24 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { speakMalayalam, stopAudio } from '../utils/tts';
+import { speakText, stopAudio } from '../utils/tts';
 
-export interface UseMalayalamTTSReturn {
+export interface UseSpeechTTSReturn {
     isDubbingEnabled: boolean;
     toggleDubbing: () => void;
     isSpeaking: boolean;
     speechRate: number;
     setSpeechRate: (rate: number) => void;
-    speak: (text: string) => void;
+    speak: (text: string, lang?: string) => void;
     stop: () => void;
     engineStatus: 'idle' | 'ready' | 'speaking' | 'error';
     engineError: string | null;
 }
 
 /**
- * React hook for Malayalam TTS dubbing.
+ * React hook for Multi-language TTS dubbing.
  *
- * Uses Google Translate's free TTS endpoint to fetch and play Malayalam audio.
- * No model download, no API key, no OS voice installation required.
- * Requires an internet connection (same as the translation feature).
+ * Uses Google Translate's free TTS endpoint to fetch and play audio.
  */
-export function useMalayalamTTS(): UseMalayalamTTSReturn {
+export function useMalayalamTTS(): UseSpeechTTSReturn {
     const [isDubbingEnabled, setIsDubbingEnabled] = useState(false);
     const [isSpeaking, setIsSpeaking] = useState(false);
     const [speechRate, setSpeechRate] = useState(0.9);
@@ -28,7 +26,7 @@ export function useMalayalamTTS(): UseMalayalamTTSReturn {
     const [engineError, setEngineError] = useState<string | null>(null);
 
     // Prevent overlapping: if a new sentence comes in while fetching, only speak the latest
-    const pendingTextRef = useRef<string | null>(null);
+    const pendingTextRef = useRef<{ text: string; lang: string } | null>(null);
     const isFetchingRef = useRef(false);
 
     // Cleanup on unmount
@@ -39,27 +37,31 @@ export function useMalayalamTTS(): UseMalayalamTTSReturn {
     }, []);
 
     const speak = useCallback(
-        (text: string) => {
+        (text: string, lang: string = 'ml') => {
             if (!isDubbingEnabled || !text.trim()) return;
 
             // If already fetching audio for a previous sentence, replace it with the latest
             if (isFetchingRef.current) {
-                pendingTextRef.current = text;
-                stopAudio(); // Cancel any playing audio
+                pendingTextRef.current = { text, lang };
+                stopAudio();
                 return;
             }
 
-            const doSpeak = async (textToSpeak: string) => {
+            const doSpeak = async (textToSpeak: string, speakLang: string) => {
                 isFetchingRef.current = true;
-                setEngineStatus('speaking');
-                setIsSpeaking(true);
                 setEngineError(null);
+                setEngineStatus('speaking');
 
-                await speakMalayalam(
+                await speakText(
                     textToSpeak,
+                    speakLang,
                     speechRate,
+                    // onStart – called when audio ACTUALLY begins playing
                     () => {
-                        // Audio ended
+                        setIsSpeaking(true);
+                    },
+                    // onEnd – called when audio finishes
+                    () => {
                         setIsSpeaking(false);
                         isFetchingRef.current = false;
                         setEngineStatus('ready');
@@ -68,9 +70,10 @@ export function useMalayalamTTS(): UseMalayalamTTSReturn {
                         if (pendingTextRef.current) {
                             const next = pendingTextRef.current;
                             pendingTextRef.current = null;
-                            doSpeak(next);
+                            doSpeak(next.text, next.lang);
                         }
                     },
+                    // onError
                     (err) => {
                         console.error('[TTS] Error:', err.message);
                         setEngineError(err.message);
@@ -82,7 +85,7 @@ export function useMalayalamTTS(): UseMalayalamTTSReturn {
                 );
             };
 
-            doSpeak(text);
+            doSpeak(text, lang);
         },
         [isDubbingEnabled, speechRate]
     );
