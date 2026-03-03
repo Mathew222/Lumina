@@ -171,7 +171,6 @@ export async function speakText(
     onEnd?: () => void,
     onError?: (e: Error) => void
 ): Promise<void> {
-    stopAudio();
     if (!text.trim()) return;
 
     // Try Edge TTS first (best quality)
@@ -206,4 +205,62 @@ export function stopAudio(): void {
 
 export function isAudioPlaying(): boolean {
     return currentSource !== null || window.speechSynthesis.speaking;
+}
+
+// ────────────────────────────────────────────────
+// Prefetch API (fetch and play are separated so
+// the next segment can be fetched while current plays)
+// ────────────────────────────────────────────────
+
+/**
+ * Fetch audio for a text segment without playing it.
+ * Returns an AudioBuffer ready for immediate playback, or null on failure.
+ */
+export async function fetchAudioBuffer(
+    text: string,
+    lang: string = 'ml',
+    _rate: number = 0.9   // kept for API compatibility
+): Promise<AudioBuffer | null> {
+    if (!text.trim()) return null;
+
+    const electron = (window as any).electron;
+    if (electron?.synthesizeEdgeTTS) {
+        try {
+            const voice = EDGE_VOICE_MAP[lang] || 'en-US-AriaNeural';
+            const arrayBuffer: ArrayBuffer = await electron.synthesizeEdgeTTS(text, voice);
+            const ctx = getAudioContext();
+            if (ctx.state === 'suspended') await ctx.resume();
+            return await ctx.decodeAudioData(arrayBuffer.slice(0));
+        } catch (e) {
+            console.warn('[TTS] Edge fetch failed, trying MMS/WebSpeech');
+        }
+    }
+    // MMS fallback: not easily separable into fetch+play, return null
+    // (useMalayalamTTS will fall back to speakText for these)
+    return null;
+}
+
+/**
+ * Play a pre-fetched AudioBuffer immediately.
+ */
+export function playAudioBuffer(
+    buffer: AudioBuffer,
+    rate: number = 0.9,
+    onStart?: () => void,
+    onEnd?: () => void,
+    onError?: (e: Error) => void
+): void {
+    try {
+        const ctx = getAudioContext();
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.playbackRate.value = rate;
+        source.connect(ctx.destination);
+        source.onended = () => { currentSource = null; if (onEnd) onEnd(); };
+        currentSource = source;
+        if (onStart) onStart();
+        source.start(0);
+    } catch (err: any) {
+        if (onError) onError(err instanceof Error ? err : new Error(String(err)));
+    }
 }

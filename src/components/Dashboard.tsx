@@ -82,21 +82,53 @@ export const Dashboard = () => {
     // Debounce ref for interim translation
     const interimTranslateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // Auto-speak final translated text when dubbing is enabled
-    const lastSpokenTextRef = useRef('');
-    useEffect(() => {
-        if (!tts.isDubbingEnabled || !translatedText) return;
-        // Only speak new content (avoid re-speaking the same text)
-        if (translatedText === lastSpokenTextRef.current) return;
-        lastSpokenTextRef.current = translatedText;
-        tts.speak(translatedText, targetLanguage);
-    }, [translatedText, targetLanguage, tts.isDubbingEnabled, tts.speak]);
+    // TTS: tracks English `text` position, translates full new segment fresh for accuracy.
+    // Translating the complete phrase gives Google Translate full sentence context
+    // → much better Malayalam than the fragmented incremental translatedText.
+    const lastEnglishSpokenLenRef = useRef(0);
+    const ttsPendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // Stop speaking when switching language (optional, but keep for consistency)
+    useEffect(() => {
+        if (!tts.isDubbingEnabled) return;
+        if (ttsPendingTimerRef.current) clearTimeout(ttsPendingTimerRef.current);
+        if (!text) { lastEnglishSpokenLenRef.current = 0; return; }
+        if (text.length < lastEnglishSpokenLenRef.current) lastEnglishSpokenLenRef.current = 0;
+
+        const newEnglish = text.slice(lastEnglishSpokenLenRef.current).trim();
+        if (!newEnglish) return;
+
+        const speakNow = async () => {
+            const phrase = text.slice(lastEnglishSpokenLenRef.current).trim();
+            if (!phrase) return;
+            lastEnglishSpokenLenRef.current = text.length;
+
+            // Translate the FULL phrase fresh — complete sentence context = accurate Malayalam
+            let toSpeak = phrase;
+            if (targetLanguage !== 'en') {
+                try { toSpeak = await translateText(phrase, targetLanguage, false); } catch { /* use English */ }
+            }
+            if (toSpeak.trim()) tts.speak(toSpeak, targetLanguage);
+        };
+
+        // Fire immediately on sentence endings (.!?) — full sentence spoken at once
+        if (/[.!?]$/.test(text.trim())) {
+            speakNow();
+        } else {
+            // 1.5s pause = natural speaker pause, then speak accumulated phrase
+            ttsPendingTimerRef.current = setTimeout(speakNow, 1500);
+        }
+
+        return () => { if (ttsPendingTimerRef.current) clearTimeout(ttsPendingTimerRef.current); };
+    }, [text, tts.isDubbingEnabled, targetLanguage]);
+
+    // Reset on language change
     useEffect(() => {
         tts.stop();
-        lastSpokenTextRef.current = '';
+        lastEnglishSpokenLenRef.current = 0;
+        if (ttsPendingTimerRef.current) clearTimeout(ttsPendingTimerRef.current!);
     }, [targetLanguage]);
+
+
 
     // Auto-Ducking Logic
     useEffect(() => {
@@ -354,7 +386,7 @@ export const Dashboard = () => {
         setShowLanguageMenu(false);
         // Clear context when changing language
         clearTranslationContext();
-        lastSpokenTextRef.current = '';
+        lastEnglishSpokenLenRef.current = 0;
         // Re-translate current text
         if (text && lang !== 'en') {
             setIsTranslating(true);

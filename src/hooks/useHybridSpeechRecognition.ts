@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 export interface UseHybridSpeechRecognitionReturn {
     text: string;           // Final refined text (from Whisper)
     interimText: string;    // Real-time interim text (from Vosk)
+    lastWhisperText: string; // Most recent Whisper-only segment (for TTS dubbing)
     isListening: boolean;
     startListening: () => void;
     stopListening: () => void;
@@ -29,6 +30,7 @@ export interface UseHybridSpeechRecognitionReturn {
 export function useHybridSpeechRecognition(): UseHybridSpeechRecognitionReturn {
     const [text, setText] = useState('');
     const [interimText, setInterimText] = useState('');
+    const [lastWhisperText, setLastWhisperText] = useState(''); // Fires only on Whisper segments
     const [isListening, setIsListening] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [audioLevel, setAudioLevel] = useState(0);
@@ -161,6 +163,8 @@ export function useHybridSpeechRecognition(): UseHybridSpeechRecognitionReturn {
                     const clean = resultText.trim();
                     if (clean.length > 0) {
                         console.log('[Hybrid] Whisper refinement:', clean);
+                        // Update the lastWhisperText to trigger TTS in Dashboard
+                        setLastWhisperText(clean);
                         // Replace with Whisper's more accurate transcription
                         setText(prev => {
                             // If Whisper result is substantially different, use it
@@ -457,6 +461,7 @@ export function useHybridSpeechRecognition(): UseHybridSpeechRecognitionReturn {
     return {
         text,
         interimText,
+        lastWhisperText,
         isListening,
         startListening,
         stopListening,

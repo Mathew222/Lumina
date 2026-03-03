@@ -1,6 +1,8 @@
 /**
- * Translation Utility with Low-Latency Translation
- * Optimized for real-time subtitle translation
+ * Translation Utility
+ *
+ * translateText  → Gemini API (accurate, natural Malayalam) with Google Translate fallback
+ * translateInterim → Google Translate only (fast, for live subtitle preview)
  */
 
 export type SupportedLanguage = 'en' | 'ml';
@@ -10,250 +12,129 @@ export const LANGUAGES: { code: SupportedLanguage; name: string; nativeName: str
     { code: 'ml', name: 'Malayalam', nativeName: 'മലയാളം' },
 ];
 
-// Cache for translations to avoid repeated API calls
 const translationCache = new Map<string, string>();
-
-// Pending translation requests to prevent duplicate calls
 const pendingRequests = new Map<string, Promise<string>>();
 
-// Context buffer for context-aware translation (reduced for speed)
-let contextBuffer: string[] = [];
-const MAX_CONTEXT_SENTENCES = 2; // Reduced from 5 for faster translation
+// ────────────────────────────────────────────────
+// API helpers
+// ────────────────────────────────────────────────
 
-// Pre-warm cache with common words/phrases for Malayalam
-const commonTranslations: Record<string, string> = {
-    'hello': 'ഹലോ',
-    'thank you': 'നന്ദി',
-    'yes': 'അതെ',
-    'no': 'ഇല്ല',
-    'okay': 'ശരി',
-    'please': 'ദയവായി',
-    'sorry': 'ക്ഷമിക്കണം',
-    'good': 'നല്ലത്',
-    'the': '',  // Skip common articles
-    'a': '',
-    'an': '',
-};
+function getGeminiApiKey(): string {
+    try {
+        return import.meta.env.VITE_GEMINI_API_KEY ||
+            localStorage.getItem('lumina_gemini_api_key') || '';
+    } catch { return ''; }
+}
 
-// Initialize cache with common translations
-Object.entries(commonTranslations).forEach(([en, ml]) => {
-    if (ml) translationCache.set(`${en}_ml`, ml);
-});
+async function geminiTranslate(text: string, targetLang: SupportedLanguage): Promise<string> {
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) throw new Error('No Gemini key');
+
+    const langDesc = targetLang === 'ml'
+        ? 'Malayalam (മലയാളം) — use natural, modern, conversational Malayalam. Avoid archaic or overly formal words.'
+        : targetLang;
+
+    const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{
+                    parts: [{
+                        text:
+                            `Translate the following English text to ${langDesc}.\nReturn ONLY the translated text — no quotes, no explanation, nothing else.\n\nText: ${text}`
+                    }]
+                }],
+                generationConfig: { temperature: 0.1, maxOutputTokens: 1024 }
+            })
+        }
+    );
+    if (!res.ok) throw new Error(`Gemini ${res.status}`);
+    const data = await res.json();
+    const out = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (!out) throw new Error('Empty response');
+    return out;
+}
+
+async function googleTranslate(text: string, targetLang: SupportedLanguage, timeoutMs = 3000): Promise<string> {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
+        const res = await fetch(url, { signal: ctrl.signal });
+        clearTimeout(tid);
+        if (!res.ok) throw new Error(`${res.status}`);
+        const data = await res.json();
+        let out = '';
+        if (data?.[0]) for (const seg of data[0]) if (seg?.[0]) out += seg[0];
+        return out;
+    } catch { clearTimeout(tid); throw new Error('Google failed'); }
+}
+
+// ────────────────────────────────────────────────
+// Public API
+// ────────────────────────────────────────────────
 
 /**
- * Translate text using Google Translate API (free tier)
- * Optimized for low latency with reduced context
+ * Translate full sentences/phrases.
+ * Uses Gemini for accurate, natural Malayalam; falls back to Google Translate.
  */
 export async function translateText(
     text: string,
     targetLang: SupportedLanguage,
-    useContext: boolean = true
+    _useContext = true
 ): Promise<string> {
-    if (targetLang === 'en' || !text.trim()) {
-        return text;
-    }
+    if (targetLang === 'en' || !text.trim()) return text;
 
-    // Check cache first (fastest path)
-    const cacheKey = `${text.toLowerCase().trim()}_${targetLang}`;
-    if (translationCache.has(cacheKey)) {
-        // Update context even for cached results
-        updateContext(text);
-        return translationCache.get(cacheKey)!;
-    }
+    const key = `${text.trim()}_${targetLang}`;
+    if (translationCache.has(key)) return translationCache.get(key)!;
+    if (pendingRequests.has(key)) return pendingRequests.get(key)!;
 
-    // Check if there's already a pending request for this text
-    if (pendingRequests.has(cacheKey)) {
-        return pendingRequests.get(cacheKey)!;
-    }
-
-    // Create the translation promise
-    const translationPromise = performTranslation(text, targetLang, useContext, cacheKey);
-    pendingRequests.set(cacheKey, translationPromise);
-
-    try {
-        const result = await translationPromise;
-        return result;
-    } finally {
-        pendingRequests.delete(cacheKey);
-    }
-}
-
-async function performTranslation(
-    text: string,
-    targetLang: SupportedLanguage,
-    useContext: boolean,
-    cacheKey: string
-): Promise<string> {
-    try {
-        // Build minimal context for faster translation
-        let textToTranslate = text;
-
-        // Only use 1-2 previous sentences for context (faster)
-        if (useContext && contextBuffer.length > 0) {
-            // Use only the last sentence for minimal context
-            const lastContext = contextBuffer[contextBuffer.length - 1];
-            textToTranslate = lastContext + '. ' + text;
-        }
-
-        // Use Google Translate API with timeout for faster failure
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3000); // 3s timeout
-
-        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=${targetLang}&dt=t&q=${encodeURIComponent(textToTranslate)}`;
-
-        const response = await fetch(url, {
-            signal: controller.signal,
-            // Hint to browser for faster connection
-            keepalive: true,
-        });
-        clearTimeout(timeoutId);
-
-        if (!response.ok) {
-            throw new Error(`Translation failed: ${response.status}`);
-        }
-
-        const data = await response.json();
-
-        // Parse the response
-        let translatedText = '';
-        if (data && data[0]) {
-            for (const segment of data[0]) {
-                if (segment[0]) {
-                    translatedText += segment[0];
-                }
-            }
-        }
-
-        // Extract only the current sentence's translation if context was used
-        if (useContext && contextBuffer.length > 0) {
-            const parts = translatedText.split('. ');
-            translatedText = parts[parts.length - 1] || translatedText;
-        }
-
-        // Update context and cache
-        updateContext(text);
-        translationCache.set(cacheKey, translatedText);
-
-        return translatedText;
-    } catch (error) {
-        console.error('[Translation] Error:', error);
-        return text;
-    }
-}
-
-function updateContext(text: string): void {
-    contextBuffer.push(text);
-    if (contextBuffer.length > MAX_CONTEXT_SENTENCES) {
-        contextBuffer.shift();
-    }
-}
-
-/**
- * Translate text in real-time (for interim results)
- * Ultra-fast path with minimal processing
- */
-export async function translateInterim(
-    text: string,
-    targetLang: SupportedLanguage
-): Promise<string> {
-    if (targetLang === 'en' || !text.trim()) {
-        return text;
-    }
-
-    // Very short text - check common words cache
-    const lowerText = text.toLowerCase().trim();
-    if (lowerText.length < 15) {
-        const cached = translationCache.get(`${lowerText}_${targetLang}`);
-        if (cached !== undefined) {
-            return cached || text;
-        }
-    }
-
-    // Check cache
-    const cacheKey = `interim_${lowerText}_${targetLang}`;
-    if (translationCache.has(cacheKey)) {
-        return translationCache.get(cacheKey)!;
-    }
-
-    // Check pending requests
-    if (pendingRequests.has(cacheKey)) {
-        return pendingRequests.get(cacheKey)!;
-    }
-
-    // Perform fast translation without context
-    const translationPromise = (async () => {
+    const promise = (async () => {
+        // Try Gemini first (best quality for Malayalam)
         try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 2000); // 2s timeout for interim
-
-            const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
-
-            const response = await fetch(url, {
-                signal: controller.signal,
-                keepalive: true,
-            });
-            clearTimeout(timeoutId);
-
-            if (!response.ok) {
-                return text;
-            }
-
-            const data = await response.json();
-            let translatedText = '';
-            if (data && data[0]) {
-                for (const segment of data[0]) {
-                    if (segment[0]) {
-                        translatedText += segment[0];
-                    }
-                }
-            }
-
-            // Cache with size limit
-            if (translationCache.size > 500) {
-                // Clear old interim translations
-                const keys = Array.from(translationCache.keys());
-                let cleared = 0;
-                for (const key of keys) {
-                    if (key.startsWith('interim_')) {
-                        translationCache.delete(key);
-                        cleared++;
-                        if (cleared >= 100) break;
-                    }
-                }
-            }
-            translationCache.set(cacheKey, translatedText);
-
-            return translatedText;
+            const result = await geminiTranslate(text, targetLang);
+            translationCache.set(key, result);
+            return result;
+        } catch (e) {
+            console.warn('[Translation] Gemini failed, falling back to Google:', e);
+        }
+        // Google Translate fallback
+        try {
+            const result = await googleTranslate(text, targetLang);
+            translationCache.set(key, result);
+            return result;
         } catch {
             return text;
         }
     })();
 
-    pendingRequests.set(cacheKey, translationPromise);
+    pendingRequests.set(key, promise);
+    try { return await promise; } finally { pendingRequests.delete(key); }
+}
 
+/**
+ * Translate interim/partial text — always uses Google Translate (low latency).
+ * This is for the live subtitle preview display only.
+ */
+export async function translateInterim(text: string, targetLang: SupportedLanguage): Promise<string> {
+    if (targetLang === 'en' || !text.trim()) return text;
+    const key = `i_${text.trim()}_${targetLang}`;
+    if (translationCache.has(key)) return translationCache.get(key)!;
     try {
-        return await translationPromise;
-    } finally {
-        pendingRequests.delete(cacheKey);
-    }
+        const result = await googleTranslate(text, targetLang, 2000);
+        if (translationCache.size > 300) {
+            for (const k of translationCache.keys()) { if (k.startsWith('i_')) { translationCache.delete(k); break; } }
+        }
+        translationCache.set(key, result);
+        return result;
+    } catch { return text; }
 }
 
-/**
- * Clear the context buffer (call when starting new session)
- */
-export function clearTranslationContext(): void {
-    contextBuffer = [];
-}
+export function clearTranslationContext(): void { /* no-op */ }
 
-/**
- * Clear all cached translations
- */
 export function clearTranslationCache(): void {
     translationCache.clear();
-    contextBuffer = [];
     pendingRequests.clear();
-    // Re-add common translations
-    Object.entries(commonTranslations).forEach(([en, ml]) => {
-        if (ml) translationCache.set(`${en}_ml`, ml);
-    });
 }

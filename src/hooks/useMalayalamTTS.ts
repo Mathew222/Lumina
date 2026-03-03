@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { speakText, stopAudio } from '../utils/tts';
+import { fetchAudioBuffer, playAudioBuffer, stopAudio } from '../utils/tts';
 
 export interface UseSpeechTTSReturn {
     isDubbingEnabled: boolean;
@@ -14,9 +14,10 @@ export interface UseSpeechTTSReturn {
 }
 
 /**
- * React hook for Multi-language TTS dubbing.
+ * TTS hook with gap-free playback via lookahead prefetch.
  *
- * Uses Google Translate's free TTS endpoint to fetch and play audio.
+ * While segment N plays, segment N+1 is fetched in the background.
+ * When N ends, N+1 starts instantly — no silence between segments.
  */
 export function useMalayalamTTS(): UseSpeechTTSReturn {
     const [isDubbingEnabled, setIsDubbingEnabled] = useState(false);
@@ -25,97 +26,89 @@ export function useMalayalamTTS(): UseSpeechTTSReturn {
     const [engineStatus, setEngineStatus] = useState<'idle' | 'ready' | 'speaking' | 'error'>('ready');
     const [engineError, setEngineError] = useState<string | null>(null);
 
-    // Prevent overlapping: if a new sentence comes in while fetching, only speak the latest
-    const pendingTextRef = useRef<{ text: string; lang: string } | null>(null);
-    const isFetchingRef = useRef(false);
+    // FIFO queue of items to speak
+    const queueRef = useRef<Array<{ text: string; lang: string }>>([]);
+    // Prefetched audio buffer for next segment
+    const prefetchRef = useRef<Promise<AudioBuffer | null> | null>(null);
+    const isProcessingRef = useRef(false);
+    const speechRateRef = useRef(speechRate);
+    useEffect(() => { speechRateRef.current = speechRate; }, [speechRate]);
 
-    // Cleanup on unmount
-    useEffect(() => {
-        return () => {
-            stopAudio();
-        };
-    }, []);
+    useEffect(() => { return () => { stopAudio(); }; }, []);
 
-    const speak = useCallback(
-        (text: string, lang: string = 'ml') => {
-            if (!isDubbingEnabled || !text.trim()) return;
+    const processQueue = useCallback(async () => {
+        if (isProcessingRef.current || queueRef.current.length === 0) return;
+        isProcessingRef.current = true;
 
-            // If already fetching audio for a previous sentence, replace it with the latest
-            if (isFetchingRef.current) {
-                pendingTextRef.current = { text, lang };
-                stopAudio();
-                return;
+        while (queueRef.current.length > 0) {
+            const { text, lang } = queueRef.current.shift()!;
+            setEngineStatus('speaking');
+            setEngineError(null);
+
+            // Start prefetching next segment immediately (runs in parallel with current play)
+            if (queueRef.current.length > 0) {
+                const next = queueRef.current[0];
+                prefetchRef.current = fetchAudioBuffer(next.text, lang, speechRateRef.current);
             }
 
-            const doSpeak = async (textToSpeak: string, speakLang: string) => {
-                isFetchingRef.current = true;
-                setEngineError(null);
-                setEngineStatus('speaking');
+            // Fetch current segment (or use already-prefetched buffer)
+            let buf: AudioBuffer | null = null;
+            try {
+                if (prefetchRef.current && queueRef.current.length === 0) {
+                    // We already prefetched this one (it was N+1, now N)
+                    buf = await prefetchRef.current;
+                    prefetchRef.current = null;
+                } else {
+                    buf = await fetchAudioBuffer(text, lang, speechRateRef.current);
+                }
+            } catch (err: any) {
+                console.error('[TTS] fetch error:', err.message);
+                setEngineError(err.message);
+                setEngineStatus('error');
+                continue; // skip to next item
+            }
 
-                await speakText(
-                    textToSpeak,
-                    speakLang,
-                    speechRate,
-                    // onStart – called when audio ACTUALLY begins playing
-                    () => {
-                        setIsSpeaking(true);
-                    },
-                    // onEnd – called when audio finishes
-                    () => {
-                        setIsSpeaking(false);
-                        isFetchingRef.current = false;
-                        setEngineStatus('ready');
+            if (!buf) continue;
 
-                        // If a newer sentence was queued while we were fetching, speak it now
-                        if (pendingTextRef.current) {
-                            const next = pendingTextRef.current;
-                            pendingTextRef.current = null;
-                            doSpeak(next.text, next.lang);
-                        }
-                    },
-                    // onError
+            // Play the buffer
+            await new Promise<void>((resolve) => {
+                playAudioBuffer(
+                    buf!,
+                    speechRateRef.current,
+                    () => setIsSpeaking(true),
+                    () => { setIsSpeaking(false); resolve(); },
                     (err) => {
-                        console.error('[TTS] Error:', err.message);
                         setEngineError(err.message);
                         setEngineStatus('error');
                         setIsSpeaking(false);
-                        isFetchingRef.current = false;
-                        pendingTextRef.current = null;
+                        resolve();
                     }
                 );
-            };
+            });
+        }
 
-            doSpeak(text, lang);
-        },
-        [isDubbingEnabled, speechRate]
-    );
+        setEngineStatus('ready');
+        isProcessingRef.current = false;
+    }, []);
+
+    const speak = useCallback((text: string, lang = 'ml') => {
+        if (!isDubbingEnabled || !text.trim()) return;
+        queueRef.current.push({ text, lang });
+        processQueue();
+    }, [isDubbingEnabled, processQueue]);
 
     const stop = useCallback(() => {
+        queueRef.current = [];
+        prefetchRef.current = null;
+        isProcessingRef.current = false;
         stopAudio();
-        pendingTextRef.current = null;
-        isFetchingRef.current = false;
         setIsSpeaking(false);
         setEngineStatus('ready');
     }, []);
 
     const toggleDubbing = useCallback(() => {
-        setIsDubbingEnabled((prev) => {
-            if (prev) {
-                stop();
-            }
-            return !prev;
-        });
+        setIsDubbingEnabled(prev => { if (prev) stop(); return !prev; });
     }, [stop]);
 
-    return {
-        isDubbingEnabled,
-        toggleDubbing,
-        isSpeaking,
-        speechRate,
-        setSpeechRate,
-        speak,
-        stop,
-        engineStatus,
-        engineError,
-    };
+    return { isDubbingEnabled, toggleDubbing, isSpeaking, speechRate, setSpeechRate, speak, stop, engineStatus, engineError };
 }
