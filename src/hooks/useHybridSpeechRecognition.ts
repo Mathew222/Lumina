@@ -27,7 +27,11 @@ export interface UseHybridSpeechRecognitionReturn {
  * - Vosk provides immediate partial/interim results (< 300ms latency)
  * - Whisper refines completed sentences for better accuracy (2-3s delay)
  */
-export function useHybridSpeechRecognition(): UseHybridSpeechRecognitionReturn {
+export interface UseHybridOptions {
+    isMuted?: boolean;
+}
+
+export function useHybridSpeechRecognition(options?: UseHybridOptions): UseHybridSpeechRecognitionReturn {
     const [text, setText] = useState('');
     const [interimText, setInterimText] = useState('');
     const [lastWhisperText, setLastWhisperText] = useState(''); // Fires only on Whisper segments
@@ -69,10 +73,15 @@ export function useHybridSpeechRecognition(): UseHybridSpeechRecognitionReturn {
 
     const [retryCount, setRetryCount] = useState(0);
     const isModelLoadingRef = useRef(isModelLoading);
+    const isMutedRef = useRef(options?.isMuted || false);
 
     useEffect(() => {
         isModelLoadingRef.current = isModelLoading;
     }, [isModelLoading]);
+
+    useEffect(() => {
+        isMutedRef.current = options?.isMuted || false;
+    }, [options?.isMuted]);
 
     // Start as soon as Vosk is ready (fast) - don't wait for Whisper (slow)
     useEffect(() => {
@@ -340,7 +349,7 @@ export function useHybridSpeechRecognition(): UseHybridSpeechRecognitionReturn {
             const SPEECH_THRESHOLD = 0.001;
 
             processor.onaudioprocess = (e) => {
-                if (isModelLoadingRef.current) return;
+                if (isModelLoadingRef.current || isMutedRef.current) return;
 
                 const input = e.inputBuffer.getChannelData(0);
 

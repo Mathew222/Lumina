@@ -10,10 +10,13 @@ import { summarizeConversation, getStoredApiKey, setStoredApiKey } from '../util
 import { saveSession, generateSessionId } from '../utils/sessionStorage';
 import { SummaryView } from './SummaryView';
 import { SessionHistory } from './SessionHistory';
+import { saveSummaryToSupabase } from '../utils/supabase';
 
 export const Dashboard = () => {
-    const { text, interimText, isListening, startListening, stopListening, error, audioLevel, setMonitorVolume, isModelLoading, reloadModel, engineStatus } = useHybridSpeechRecognition();
     const tts = useMalayalamTTS();
+    const { text, interimText, isListening, startListening, stopListening, error, audioLevel, setMonitorVolume, isModelLoading, reloadModel, engineStatus } = useHybridSpeechRecognition({
+        isMuted: tts.isSpeaking
+    });
     const channelRef = useRef<BroadcastChannel | null>(null);
 
     // Language state
@@ -47,6 +50,7 @@ export const Dashboard = () => {
     const [currentTranscript, setCurrentTranscript] = useState<string>('');
     const [currentRecordedAt, setCurrentRecordedAt] = useState<string>('');
     const [currentDuration, setCurrentDuration] = useState<number>(0);
+    const [currentSessionId, setCurrentSessionId] = useState<string>('');
 
     // Session History State
     const [showSessionHistory, setShowSessionHistory] = useState(false);
@@ -441,8 +445,9 @@ export const Dashboard = () => {
         }
 
         // Create session object
+        const sessionId = generateSessionId();
         const session: Session = {
-            id: generateSessionId(),
+            id: sessionId,
             startedAt: new Date(startTime).toISOString(),
             endedAt: new Date(endTime).toISOString(),
             transcript: fullTranscript,
@@ -455,6 +460,7 @@ export const Dashboard = () => {
         saveSession(session);
 
         // Store transcript and metadata for display
+        setCurrentSessionId(sessionId);
         setCurrentTranscript(fullTranscript);
         setCurrentRecordedAt(new Date(startTime).toISOString());
         setCurrentDuration(duration);
@@ -472,6 +478,14 @@ export const Dashboard = () => {
             // Update session with summary
             session.summary = result.summary;
             saveSession(session);
+
+            // Save to Supabase
+            saveSummaryToSupabase(
+                sessionId,
+                fullTranscript,
+                JSON.stringify(result.summary),
+                summaryLanguage
+            );
         } else {
             setSummaryError(result.error.message);
         }
@@ -487,6 +501,7 @@ export const Dashboard = () => {
     };
 
     const handleSelectSession = (session: Session) => {
+        setCurrentSessionId(session.id);
         setCurrentSummary(session.summary);
         setCurrentTranscript(session.transcript);
         setCurrentRecordedAt(session.startedAt);
@@ -508,6 +523,14 @@ export const Dashboard = () => {
 
         if (result.success) {
             setCurrentSummary(result.summary);
+            if (currentSessionId) {
+                saveSummaryToSupabase(
+                    currentSessionId,
+                    currentTranscript,
+                    JSON.stringify(result.summary),
+                    language
+                );
+            }
         } else {
             setSummaryError(result.error.message);
         }
