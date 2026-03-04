@@ -23,5 +23,9 @@ contextBridge.exposeInMainWorld("electron", {
   synthesizeEdgeTTS: async (text, voice) => {
     const buffer = await ipcRenderer.invoke("synthesize-edge-tts", { text, voice });
     return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+  },
+  // Pre-warm TTS WebSocket connection for a given voice (call before first phrase)
+  warmEdgeTTS: async (voice) => {
+    await ipcRenderer.invoke("warm-edge-tts", voice);
   }
 });

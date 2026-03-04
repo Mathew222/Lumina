@@ -1,9 +1,9 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { fetchAudioBuffer, playAudioBuffer, stopAudio } from '../utils/tts';
+import { fetchAudioBuffer, playAudioBuffer, stopAudio, warmVoice } from '../utils/tts';
 
 export interface UseSpeechTTSReturn {
     isDubbingEnabled: boolean;
-    toggleDubbing: () => void;
+    toggleDubbing: (warmLang?: string) => void;
     isSpeaking: boolean;
     speechRate: number;
     setSpeechRate: (rate: number) => void;
@@ -32,7 +32,9 @@ export function useMalayalamTTS(): UseSpeechTTSReturn {
     const prefetchRef = useRef<Promise<AudioBuffer | null> | null>(null);
     const isProcessingRef = useRef(false);
     const speechRateRef = useRef(speechRate);
+    const isDubbingEnabledRef = useRef(isDubbingEnabled);
     useEffect(() => { speechRateRef.current = speechRate; }, [speechRate]);
+    useEffect(() => { isDubbingEnabledRef.current = isDubbingEnabled; }, [isDubbingEnabled]);
 
     useEffect(() => { return () => { stopAudio(); }; }, []);
 
@@ -92,10 +94,10 @@ export function useMalayalamTTS(): UseSpeechTTSReturn {
     }, []);
 
     const speak = useCallback((text: string, lang = 'ml') => {
-        if (!isDubbingEnabled || !text.trim()) return;
+        if (!isDubbingEnabledRef.current || !text.trim()) return;
         queueRef.current.push({ text, lang });
         processQueue();
-    }, [isDubbingEnabled, processQueue]);
+    }, [processQueue]);
 
     const stop = useCallback(() => {
         queueRef.current = [];
@@ -106,8 +108,13 @@ export function useMalayalamTTS(): UseSpeechTTSReturn {
         setEngineStatus('ready');
     }, []);
 
-    const toggleDubbing = useCallback(() => {
-        setIsDubbingEnabled(prev => { if (prev) stop(); return !prev; });
+    const toggleDubbing = useCallback((warmLang?: string) => {
+        setIsDubbingEnabled(prev => {
+            if (prev) { stop(); return false; }
+            // Pre-warm the Edge TTS WebSocket before the first phrase
+            warmVoice(warmLang || 'ml');
+            return true;
+        });
     }, [stop]);
 
     return { isDubbingEnabled, toggleDubbing, isSpeaking, speechRate, setSpeechRate, speak, stop, engineStatus, engineError };

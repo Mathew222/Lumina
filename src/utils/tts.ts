@@ -41,6 +41,16 @@ function getEdgeVoice(lang: string): string {
     return EDGE_VOICE_MAP[lang] || 'en-US-AriaNeural';
 }
 
+/** Pre-warm the Edge TTS WebSocket connection for a given language. Call this
+ *  as early as possible (e.g. when the user toggles dubbing on) so the first
+ *  real phrase starts without waiting for the WebSocket handshake. */
+export function warmVoice(lang: string): void {
+    const electron = (window as any).electron;
+    if (!electron?.warmEdgeTTS) return;
+    const voice = getEdgeVoice(lang);
+    electron.warmEdgeTTS(voice).catch(() => { /* ignore */ });
+}
+
 // ────────────────────────────────────────────────
 // Meta MMS Worker (Malayalam offline fallback)
 // ────────────────────────────────────────────────

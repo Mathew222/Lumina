@@ -93,7 +93,23 @@ export const Dashboard = () => {
     const ttsPendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     useEffect(() => {
-        if (!tts.isDubbingEnabled) return;
+        // Always track the length even when disabled, so we don't read back history
+        if (!tts.isDubbingEnabled) {
+            if (text) {
+                // Find the start of the current sentence (last punctuation mark)
+                // so we can immediately start dubbing the current phrase when enabled
+                const lastPunctuationMatch = [...text.matchAll(/[.!?]/g)].pop();
+                if (lastPunctuationMatch && lastPunctuationMatch.index !== undefined) {
+                    // Set tracker to just after the last sentence to speak the current unfinished one
+                    lastEnglishSpokenLenRef.current = lastPunctuationMatch.index + 1;
+                } else {
+                    // If no punctuation, we are in the very first sentence
+                    lastEnglishSpokenLenRef.current = 0;
+                }
+            }
+            return;
+        }
+
         if (ttsPendingTimerRef.current) clearTimeout(ttsPendingTimerRef.current);
         if (!text) { lastEnglishSpokenLenRef.current = 0; return; }
         if (text.length < lastEnglishSpokenLenRef.current) lastEnglishSpokenLenRef.current = 0;
@@ -118,12 +134,35 @@ export const Dashboard = () => {
         if (/[.!?]$/.test(text.trim())) {
             speakNow();
         } else {
-            // 1.5s pause = natural speaker pause, then speak accumulated phrase
-            ttsPendingTimerRef.current = setTimeout(speakNow, 1500);
+            // 0.2s pause to reduce latency, then speak accumulated phrase
+            ttsPendingTimerRef.current = setTimeout(speakNow, 200);
         }
 
         return () => { if (ttsPendingTimerRef.current) clearTimeout(ttsPendingTimerRef.current); };
     }, [text, tts.isDubbingEnabled, targetLanguage]);
+
+    // Immediately speak when dubbing is turned ON (no waiting for next text update)
+    const prevDubbingRef = useRef(false);
+    useEffect(() => {
+        const wasOff = !prevDubbingRef.current;
+        const isNowOn = tts.isDubbingEnabled;
+        prevDubbingRef.current = isNowOn;
+
+        if (!wasOff || !isNowOn || !text) return; // Only fire on off→on edge
+
+        // Speak whatever text has accumulated since the last sentence
+        const speakCurrent = async () => {
+            const phrase = text.slice(lastEnglishSpokenLenRef.current).trim();
+            if (!phrase) return;
+            lastEnglishSpokenLenRef.current = text.length;
+            let toSpeak = phrase;
+            if (targetLanguage !== 'en') {
+                try { toSpeak = await translateText(phrase, targetLanguage, false); } catch { /* use English */ }
+            }
+            if (toSpeak.trim()) tts.speak(toSpeak, targetLanguage);
+        };
+        speakCurrent();
+    }, [tts.isDubbingEnabled]);
 
     // Reset on language change
     useEffect(() => {
@@ -641,7 +680,7 @@ export const Dashboard = () => {
                     {/* Dubbing Toggle */}
                     <div className="relative group">
                         <button
-                            onClick={tts.toggleDubbing}
+                            onClick={() => tts.toggleDubbing(targetLanguage)}
                             title={
                                 tts.engineStatus === 'error'
                                     ? `TTS Error: ${tts.engineError}`

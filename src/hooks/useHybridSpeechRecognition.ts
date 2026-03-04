@@ -345,13 +345,21 @@ export function useHybridSpeechRecognition(options?: UseHybridOptions): UseHybri
             const VOSK_MIN_INTERVAL = 30;         // 30ms min between sends (aggressive)
             let lastVoskSendTime = 0;
 
-            const WHISPER_SILENCE_THRESHOLD = 500; // Send to Whisper after 0.5s of silence (faster refinement)
+            const WHISPER_SILENCE_THRESHOLD = 300; // Send to Whisper after 0.3s of silence (faster refinement)
             const SPEECH_THRESHOLD = 0.001;
 
             processor.onaudioprocess = (e) => {
-                if (isModelLoadingRef.current || isMutedRef.current) return;
+                if (isModelLoadingRef.current) return;
 
                 const input = e.inputBuffer.getChannelData(0);
+
+                // If muted (e.g. TTS is speaking), zero out the audio to prevent feedback loop
+                // We use zeros instead of returning early to maintain continuous audio stream for Vosk
+                if (isMutedRef.current) {
+                    for (let i = 0; i < input.length; i++) {
+                        input[i] = 0;
+                    }
+                }
 
                 // Calculate audio level
                 let sum = 0;
@@ -390,7 +398,7 @@ export function useHybridSpeechRecognition(options?: UseHybridOptions): UseHybri
                 const shouldSendToVosk = voskBufferLength >= VOSK_CHUNK_SIZE &&
                     (now - lastVoskSendTime) >= VOSK_MIN_INTERVAL;
 
-                if (shouldSendToVosk && rms > 0.00005 && voskWorkerRef.current) {  // Very low threshold for fast detection
+                if (shouldSendToVosk && voskWorkerRef.current) {  // Always send to allow Vosk to process silence
                     const fullBuffer = new Float32Array(voskBufferLength);
                     let offset = 0;
                     for (const b of voskBuffer) {
@@ -430,15 +438,15 @@ export function useHybridSpeechRecognition(options?: UseHybridOptions): UseHybri
 
                 // Send to Whisper after silence (for refinement)
                 if (!hasSpeech &&
-                    whisperBufferLengthRef.current > 16000 * 1.5 && // At least 1.5 seconds
+                    whisperBufferLengthRef.current > 16000 * 0.5 && // At least 0.5 seconds
                     (now - lastSpeechTimeRef.current) > WHISPER_SILENCE_THRESHOLD &&
                     !silenceTimeoutRef.current) {
 
-                    // Schedule Whisper refinement
+                    // Schedule Whisper refinement aggressively
                     silenceTimeoutRef.current = setTimeout(() => {
                         sendToWhisper();
                         silenceTimeoutRef.current = null;
-                    }, 200);
+                    }, 50);
                 }
 
                 // Limit Whisper buffer size (max 30 seconds)

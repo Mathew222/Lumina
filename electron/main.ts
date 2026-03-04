@@ -3,6 +3,31 @@ import path from 'path';
 import https from 'https';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 
+// ─── Persistent TTS connection pool ───────────────────────────────────────────
+// Reuse a single MsEdgeTTS instance per voice to avoid re-establishing a
+// WebSocket connection on every phrase (saves 300-800ms per phrase).
+interface CachedTTS {
+    instance: MsEdgeTTS;
+    idleTimer: ReturnType<typeof setTimeout> | null;
+}
+const ttsCache = new Map<string, CachedTTS>();
+const TTS_IDLE_TTL_MS = 30_000; // tear down after 30s of inactivity
+
+async function getOrCreateTTS(voice: string): Promise<MsEdgeTTS> {
+    let cached = ttsCache.get(voice);
+    if (cached) {
+        // Reset idle timer
+        if (cached.idleTimer) clearTimeout(cached.idleTimer);
+        cached.idleTimer = setTimeout(() => ttsCache.delete(voice), TTS_IDLE_TTL_MS);
+        return cached.instance;
+    }
+    const instance = new MsEdgeTTS();
+    await instance.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
+    const idleTimer = setTimeout(() => ttsCache.delete(voice), TTS_IDLE_TTL_MS);
+    ttsCache.set(voice, { instance, idleTimer });
+    return instance;
+}
+
 
 let mainWindow: BrowserWindow | null;
 let overlayWindow: BrowserWindow | null;
@@ -137,17 +162,36 @@ app.whenReady().then(() => {
     });
 
     // Microsoft Edge Neural TTS — returns MP3 audio buffer for playback
+    // Uses a persistent per-voice connection to avoid WebSocket cold-start on every phrase.
     ipcMain.handle('synthesize-edge-tts', async (_event, { text, voice }: { text: string; voice: string }) => {
-        const tts = new MsEdgeTTS();
-        await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
-        const chunks: Buffer[] = [];
-        const { audioStream } = tts.toStream(text);
-        await new Promise<void>((resolve, reject) => {
-            audioStream.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
-            audioStream.on('end', resolve);
-            audioStream.on('error', reject);
-        });
-        return Buffer.concat(chunks);
+        try {
+            const tts = await getOrCreateTTS(voice);
+            const chunks: Buffer[] = [];
+            const { audioStream } = tts.toStream(text);
+            await new Promise<void>((resolve, reject) => {
+                audioStream.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+                audioStream.on('end', resolve);
+                audioStream.on('error', reject);
+            });
+            return Buffer.concat(chunks);
+        } catch (err) {
+            // Connection may have died — evict cached instance and retry once
+            ttsCache.delete(voice);
+            const tts = await getOrCreateTTS(voice);
+            const chunks: Buffer[] = [];
+            const { audioStream } = tts.toStream(text);
+            await new Promise<void>((resolve, reject) => {
+                audioStream.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+                audioStream.on('end', resolve);
+                audioStream.on('error', reject);
+            });
+            return Buffer.concat(chunks);
+        }
+    });
+
+    // Pre-warm TTS connection for a given voice (call when dubbing is enabled)
+    ipcMain.handle('warm-edge-tts', async (_event, voice: string) => {
+        try { await getOrCreateTTS(voice); } catch { /* silently ignore */ }
     });
 
     app.on('activate', () => {

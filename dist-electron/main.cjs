@@ -21071,6 +21071,21 @@ var import_electron = require("electron");
 var import_path = __toESM(require("path"));
 var import_https = __toESM(require("https"));
 var import_msedge_tts = __toESM(require_dist());
+var ttsCache = /* @__PURE__ */ new Map();
+var TTS_IDLE_TTL_MS = 3e4;
+async function getOrCreateTTS(voice) {
+  let cached = ttsCache.get(voice);
+  if (cached) {
+    if (cached.idleTimer) clearTimeout(cached.idleTimer);
+    cached.idleTimer = setTimeout(() => ttsCache.delete(voice), TTS_IDLE_TTL_MS);
+    return cached.instance;
+  }
+  const instance = new import_msedge_tts.MsEdgeTTS();
+  await instance.setMetadata(voice, import_msedge_tts.OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
+  const idleTimer = setTimeout(() => ttsCache.delete(voice), TTS_IDLE_TTL_MS);
+  ttsCache.set(voice, { instance, idleTimer });
+  return instance;
+}
 var mainWindow;
 var overlayWindow;
 function createMainWindow() {
@@ -21182,16 +21197,34 @@ import_electron.app.whenReady().then(() => {
     });
   });
   import_electron.ipcMain.handle("synthesize-edge-tts", async (_event, { text, voice }) => {
-    const tts = new import_msedge_tts.MsEdgeTTS();
-    await tts.setMetadata(voice, import_msedge_tts.OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
-    const chunks = [];
-    const { audioStream } = tts.toStream(text);
-    await new Promise((resolve, reject) => {
-      audioStream.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
-      audioStream.on("end", resolve);
-      audioStream.on("error", reject);
-    });
-    return Buffer.concat(chunks);
+    try {
+      const tts = await getOrCreateTTS(voice);
+      const chunks = [];
+      const { audioStream } = tts.toStream(text);
+      await new Promise((resolve, reject) => {
+        audioStream.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        audioStream.on("end", resolve);
+        audioStream.on("error", reject);
+      });
+      return Buffer.concat(chunks);
+    } catch (err) {
+      ttsCache.delete(voice);
+      const tts = await getOrCreateTTS(voice);
+      const chunks = [];
+      const { audioStream } = tts.toStream(text);
+      await new Promise((resolve, reject) => {
+        audioStream.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        audioStream.on("end", resolve);
+        audioStream.on("error", reject);
+      });
+      return Buffer.concat(chunks);
+    }
+  });
+  import_electron.ipcMain.handle("warm-edge-tts", async (_event, voice) => {
+    try {
+      await getOrCreateTTS(voice);
+    } catch {
+    }
   });
   import_electron.app.on("activate", () => {
     if (import_electron.BrowserWindow.getAllWindows().length === 0) {
