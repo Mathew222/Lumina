@@ -6,6 +6,7 @@ import { BROADCAST_CHANNEL_NAME, sendMessage } from '../utils/broadcast';
 import { translateText, translateInterim, LANGUAGES, clearTranslationContext } from '../utils/translate';
 import type { SupportedLanguage } from '../utils/translate';
 import type { Session, Summary } from '../types/session';
+import { warmVoice } from '../utils/tts';
 import { summarizeConversation, getStoredApiKey, setStoredApiKey } from '../utils/gemini';
 import { saveSession, generateSessionId } from '../utils/sessionStorage';
 import { SummaryView } from './SummaryView';
@@ -86,60 +87,78 @@ export const Dashboard = () => {
     // Debounce ref for interim translation
     const interimTranslateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // TTS: tracks English `text` position, translates full new segment fresh for accuracy.
-    // Translating the complete phrase gives Google Translate full sentence context
-    // → much better Malayalam than the fragmented incremental translatedText.
-    const lastEnglishSpokenLenRef = useRef(0);
+    // TTS: reads from translatedInterim (the already-computed Malayalam subtitle text) directly.
+    // This means zero additional translation latency AND the audio matches what the subtitle shows.
+    // We track English interimText for sentence/word detection and Malayalam translatedInterim for speaking.
+    const lastEnglishSpokenLenRef = useRef(0);  // offset into interimText
+    const lastMLSpokenLenRef = useRef(0);       // offset into translatedInterim
     const ttsPendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     useEffect(() => {
-        // Always track the length even when disabled, so we don't read back history
+        // While dubbing is off, keep the pointers caught up so we only speak
+        // the current unfinished sentence when dubbing is later enabled.
         if (!tts.isDubbingEnabled) {
-            if (text) {
-                // Find the start of the current sentence (last punctuation mark)
-                // so we can immediately start dubbing the current phrase when enabled
-                const lastPunctuationMatch = [...text.matchAll(/[.!?]/g)].pop();
+            if (interimText) {
+                const lastPunctuationMatch = [...interimText.matchAll(/[.!?]/g)].pop();
                 if (lastPunctuationMatch && lastPunctuationMatch.index !== undefined) {
-                    // Set tracker to just after the last sentence to speak the current unfinished one
                     lastEnglishSpokenLenRef.current = lastPunctuationMatch.index + 1;
                 } else {
-                    // If no punctuation, we are in the very first sentence
                     lastEnglishSpokenLenRef.current = 0;
+                }
+            }
+            if (translatedInterim) {
+                const lastPunctuationMatch = [...translatedInterim.matchAll(/[.!?।]/g)].pop();
+                if (lastPunctuationMatch && lastPunctuationMatch.index !== undefined) {
+                    lastMLSpokenLenRef.current = lastPunctuationMatch.index + 1;
+                } else {
+                    lastMLSpokenLenRef.current = 0;
                 }
             }
             return;
         }
 
         if (ttsPendingTimerRef.current) clearTimeout(ttsPendingTimerRef.current);
-        if (!text) { lastEnglishSpokenLenRef.current = 0; return; }
-        if (text.length < lastEnglishSpokenLenRef.current) lastEnglishSpokenLenRef.current = 0;
+        if (!interimText || !translatedInterim) { return; }
+        if (interimText.length < lastEnglishSpokenLenRef.current) { lastEnglishSpokenLenRef.current = 0; lastMLSpokenLenRef.current = 0; }
 
-        const newEnglish = text.slice(lastEnglishSpokenLenRef.current).trim();
-        if (!newEnglish) return;
+        const newEnglish = interimText.slice(lastEnglishSpokenLenRef.current).trim();
+        const newML = translatedInterim.slice(lastMLSpokenLenRef.current).trim();
+        if (!newEnglish || !newML) return;
 
-        const speakNow = async () => {
-            const phrase = text.slice(lastEnglishSpokenLenRef.current).trim();
-            if (!phrase) return;
-            lastEnglishSpokenLenRef.current = text.length;
-
-            // Translate the FULL phrase fresh — complete sentence context = accurate Malayalam
-            let toSpeak = phrase;
+        const speakNow = () => {
+            const phraseML = translatedInterim.slice(lastMLSpokenLenRef.current).trim();
+            if (!phraseML) return;
+            lastEnglishSpokenLenRef.current = interimText.length;
+            lastMLSpokenLenRef.current = translatedInterim.length;
+            // Speak the already-translated Malayalam — no API call needed!
             if (targetLanguage !== 'en') {
-                try { toSpeak = await translateText(phrase, targetLanguage, false); } catch { /* use English */ }
+                tts.speak(phraseML, targetLanguage);
+            } else {
+                tts.speak(interimText.slice(lastEnglishSpokenLenRef.current).trim() || phraseML, targetLanguage);
             }
-            if (toSpeak.trim()) tts.speak(toSpeak, targetLanguage);
         };
 
-        // Fire immediately on sentence endings (.!?) — full sentence spoken at once
-        if (/[.!?]$/.test(text.trim())) {
+        if (/[.!?]$/.test(interimText.trim())) {
             speakNow();
         } else {
-            // 0.2s pause to reduce latency, then speak accumulated phrase
-            ttsPendingTimerRef.current = setTimeout(speakNow, 200);
+            const wordCount = newEnglish.split(/\s+/).filter(Boolean).length;
+            const delay = wordCount >= 6 ? 300 : 1000;
+            ttsPendingTimerRef.current = setTimeout(speakNow, delay);
         }
 
         return () => { if (ttsPendingTimerRef.current) clearTimeout(ttsPendingTimerRef.current); };
-    }, [text, tts.isDubbingEnabled, targetLanguage]);
+    }, [interimText, translatedInterim, tts.isDubbingEnabled, targetLanguage]);
+
+    // When Whisper refines text, advance the spoken pointer to avoid re-speaking.
+    useEffect(() => {
+        if (!tts.isDubbingEnabled || !text) return;
+        if (text.length > lastEnglishSpokenLenRef.current) {
+            lastEnglishSpokenLenRef.current = text.length;
+        }
+        if (translatedText && translatedText.length > lastMLSpokenLenRef.current) {
+            lastMLSpokenLenRef.current = translatedText.length;
+        }
+    }, [text, translatedText]);
 
     // Immediately speak when dubbing is turned ON (no waiting for next text update)
     const prevDubbingRef = useRef(false);
@@ -148,27 +167,26 @@ export const Dashboard = () => {
         const isNowOn = tts.isDubbingEnabled;
         prevDubbingRef.current = isNowOn;
 
-        if (!wasOff || !isNowOn || !text) return; // Only fire on off→on edge
+        if (!wasOff || !isNowOn) return;
 
-        // Speak whatever text has accumulated since the last sentence
-        const speakCurrent = async () => {
-            const phrase = text.slice(lastEnglishSpokenLenRef.current).trim();
-            if (!phrase) return;
-            lastEnglishSpokenLenRef.current = text.length;
-            let toSpeak = phrase;
-            if (targetLanguage !== 'en') {
-                try { toSpeak = await translateText(phrase, targetLanguage, false); } catch { /* use English */ }
-            }
-            if (toSpeak.trim()) tts.speak(toSpeak, targetLanguage);
-        };
-        speakCurrent();
+        // Speak whatever Malayalam is already on screen since the last sentence
+        const phraseML = translatedInterim
+            ? translatedInterim.slice(lastMLSpokenLenRef.current).trim()
+            : '';
+        if (phraseML && targetLanguage !== 'en') {
+            lastEnglishSpokenLenRef.current = interimText.length;
+            lastMLSpokenLenRef.current = translatedInterim.length;
+            tts.speak(phraseML, targetLanguage);
+        }
     }, [tts.isDubbingEnabled]);
 
-    // Reset on language change
+    // Reset on language change + pre-warm TTS for new language
     useEffect(() => {
         tts.stop();
         lastEnglishSpokenLenRef.current = 0;
+        lastMLSpokenLenRef.current = 0;
         if (ttsPendingTimerRef.current) clearTimeout(ttsPendingTimerRef.current!);
+        warmVoice(targetLanguage);
     }, [targetLanguage]);
 
 

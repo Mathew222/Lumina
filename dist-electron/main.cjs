@@ -21072,19 +21072,27 @@ var import_path = __toESM(require("path"));
 var import_https = __toESM(require("https"));
 var import_msedge_tts = __toESM(require_dist());
 var ttsCache = /* @__PURE__ */ new Map();
+var ttsPendingSetup = /* @__PURE__ */ new Map();
 var TTS_IDLE_TTL_MS = 3e4;
 async function getOrCreateTTS(voice) {
-  let cached = ttsCache.get(voice);
+  const cached = ttsCache.get(voice);
   if (cached) {
     if (cached.idleTimer) clearTimeout(cached.idleTimer);
     cached.idleTimer = setTimeout(() => ttsCache.delete(voice), TTS_IDLE_TTL_MS);
     return cached.instance;
   }
-  const instance = new import_msedge_tts.MsEdgeTTS();
-  await instance.setMetadata(voice, import_msedge_tts.OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
-  const idleTimer = setTimeout(() => ttsCache.delete(voice), TTS_IDLE_TTL_MS);
-  ttsCache.set(voice, { instance, idleTimer });
-  return instance;
+  const pending = ttsPendingSetup.get(voice);
+  if (pending) return pending;
+  const setup = (async () => {
+    const instance = new import_msedge_tts.MsEdgeTTS();
+    await instance.setMetadata(voice, import_msedge_tts.OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
+    const idleTimer = setTimeout(() => ttsCache.delete(voice), TTS_IDLE_TTL_MS);
+    ttsCache.set(voice, { instance, idleTimer });
+    ttsPendingSetup.delete(voice);
+    return instance;
+  })();
+  ttsPendingSetup.set(voice, setup);
+  return setup;
 }
 var mainWindow;
 var overlayWindow;

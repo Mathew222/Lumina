@@ -115,6 +115,30 @@ export async function translateText(
 }
 
 /**
+ * Fast translation for TTS dubbing — skips Gemini, uses Google Translate only.
+ * Cache-first: if the subtitle translation already ran (very likely), returns instantly.
+ * Falls back to Google Translate directly (200-400ms) instead of Gemini (500-1500ms).
+ */
+export async function translateForTTS(
+    text: string,
+    targetLang: SupportedLanguage
+): Promise<string> {
+    if (targetLang === 'en' || !text.trim()) return text;
+
+    const key = `${text.trim()}_${targetLang}`;
+    // Hit the same cache as translateText — if subtitle already translated this, it's instant
+    if (translationCache.has(key)) return translationCache.get(key)!;
+    if (pendingRequests.has(key)) return pendingRequests.get(key)!;
+
+    // Not cached yet — use fast Google Translate directly (no Gemini round-trip)
+    try {
+        const result = await googleTranslate(text, targetLang, 3000);
+        translationCache.set(key, result);
+        return result;
+    } catch { return text; }
+}
+
+/**
  * Translate interim/partial text — always uses Google Translate (low latency).
  * This is for the live subtitle preview display only.
  */

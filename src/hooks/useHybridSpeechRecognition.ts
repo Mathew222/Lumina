@@ -345,7 +345,7 @@ export function useHybridSpeechRecognition(options?: UseHybridOptions): UseHybri
             const VOSK_MIN_INTERVAL = 30;         // 30ms min between sends (aggressive)
             let lastVoskSendTime = 0;
 
-            const WHISPER_SILENCE_THRESHOLD = 300; // Send to Whisper after 0.3s of silence (faster refinement)
+            const WHISPER_SILENCE_THRESHOLD = 500; // Send to Whisper after 0.5s of silence
             const SPEECH_THRESHOLD = 0.001;
 
             processor.onaudioprocess = (e) => {
@@ -438,15 +438,15 @@ export function useHybridSpeechRecognition(options?: UseHybridOptions): UseHybri
 
                 // Send to Whisper after silence (for refinement)
                 if (!hasSpeech &&
-                    whisperBufferLengthRef.current > 16000 * 0.5 && // At least 0.5 seconds
+                    whisperBufferLengthRef.current > 16000 * 1.5 && // At least 1.5 seconds for accuracy
                     (now - lastSpeechTimeRef.current) > WHISPER_SILENCE_THRESHOLD &&
                     !silenceTimeoutRef.current) {
 
-                    // Schedule Whisper refinement aggressively
+                    // Schedule Whisper refinement — slightly delayed for audio context stability
                     silenceTimeoutRef.current = setTimeout(() => {
                         sendToWhisper();
                         silenceTimeoutRef.current = null;
-                    }, 50);
+                    }, 150);
                 }
 
                 // Limit Whisper buffer size (max 30 seconds)

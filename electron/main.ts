@@ -11,21 +11,34 @@ interface CachedTTS {
     idleTimer: ReturnType<typeof setTimeout> | null;
 }
 const ttsCache = new Map<string, CachedTTS>();
+const ttsPendingSetup = new Map<string, Promise<MsEdgeTTS>>(); // prevents race between warmup + synthesis
 const TTS_IDLE_TTL_MS = 30_000; // tear down after 30s of inactivity
 
 async function getOrCreateTTS(voice: string): Promise<MsEdgeTTS> {
-    let cached = ttsCache.get(voice);
+    const cached = ttsCache.get(voice);
     if (cached) {
         // Reset idle timer
         if (cached.idleTimer) clearTimeout(cached.idleTimer);
         cached.idleTimer = setTimeout(() => ttsCache.delete(voice), TTS_IDLE_TTL_MS);
         return cached.instance;
     }
-    const instance = new MsEdgeTTS();
-    await instance.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
-    const idleTimer = setTimeout(() => ttsCache.delete(voice), TTS_IDLE_TTL_MS);
-    ttsCache.set(voice, { instance, idleTimer });
-    return instance;
+
+    // If setup is already in-flight (e.g. warmup kicked off just before synthesis),
+    // share the same promise instead of creating a duplicate connection.
+    const pending = ttsPendingSetup.get(voice);
+    if (pending) return pending;
+
+    const setup = (async () => {
+        const instance = new MsEdgeTTS();
+        await instance.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
+        const idleTimer = setTimeout(() => ttsCache.delete(voice), TTS_IDLE_TTL_MS);
+        ttsCache.set(voice, { instance, idleTimer });
+        ttsPendingSetup.delete(voice);
+        return instance;
+    })();
+
+    ttsPendingSetup.set(voice, setup);
+    return setup;
 }
 
 

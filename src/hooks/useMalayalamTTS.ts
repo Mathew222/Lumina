@@ -22,7 +22,7 @@ export interface UseSpeechTTSReturn {
 export function useMalayalamTTS(): UseSpeechTTSReturn {
     const [isDubbingEnabled, setIsDubbingEnabled] = useState(false);
     const [isSpeaking, setIsSpeaking] = useState(false);
-    const [speechRate, setSpeechRate] = useState(0.9);
+    const [speechRate, setSpeechRate] = useState(1.25);
     const [engineStatus, setEngineStatus] = useState<'idle' | 'ready' | 'speaking' | 'error'>('ready');
     const [engineError, setEngineError] = useState<string | null>(null);
 
@@ -37,6 +37,10 @@ export function useMalayalamTTS(): UseSpeechTTSReturn {
     useEffect(() => { isDubbingEnabledRef.current = isDubbingEnabled; }, [isDubbingEnabled]);
 
     useEffect(() => { return () => { stopAudio(); }; }, []);
+
+    // Pre-warm the TTS connection on app startup so the WebSocket to Edge TTS
+    // is already established by the time the user clicks Dubbing.
+    useEffect(() => { warmVoice('ml'); }, []);
 
     const processQueue = useCallback(async () => {
         if (isProcessingRef.current || queueRef.current.length === 0) return;
@@ -95,7 +99,16 @@ export function useMalayalamTTS(): UseSpeechTTSReturn {
 
     const speak = useCallback((text: string, lang = 'ml') => {
         if (!isDubbingEnabledRef.current || !text.trim()) return;
+
         queueRef.current.push({ text, lang });
+
+        // If the queue processor is already running (something is playing),
+        // kick off a fetch for this item NOW so it's ready with zero gap when
+        // the current segment ends. Store it in prefetchRef for processQueue to pick up.
+        if (isProcessingRef.current && !prefetchRef.current) {
+            prefetchRef.current = fetchAudioBuffer(text, lang, speechRateRef.current);
+        }
+
         processQueue();
     }, [processQueue]);
 
