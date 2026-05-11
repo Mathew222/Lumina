@@ -21267,6 +21267,23 @@ import_electron.app.whenReady().then(() => {
       req.end();
     });
   });
+  import_electron.ipcMain.handle("fetch-nvidia-api", async (_event, { url, options }) => {
+    try {
+      const response = await fetch(url, options);
+      const data = await response.json().catch(() => ({}));
+      return {
+        ok: response.ok,
+        status: response.status,
+        data
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        status: 500,
+        error: error.message || "Unknown network error"
+      };
+    }
+  });
   import_electron.ipcMain.handle("synthesize-edge-tts", async (_event, { text, voice }) => {
     try {
       const tts = await getOrCreateTTS(voice);

@@ -249,6 +249,25 @@ app.whenReady().then(() => {
         });
     });
 
+    // Make NVIDIA API calls from main process to bypass browser CORS restrictions
+    ipcMain.handle('fetch-nvidia-api', async (_event, { url, options }) => {
+        try {
+            const response = await fetch(url, options);
+            const data = await response.json().catch(() => ({}));
+            return {
+                ok: response.ok,
+                status: response.status,
+                data
+            };
+        } catch (error: any) {
+            return {
+                ok: false,
+                status: 500,
+                error: error.message || 'Unknown network error'
+            };
+        }
+    });
+
     // Microsoft Edge Neural TTS — returns MP3 audio buffer for playback
     // Uses a persistent per-voice connection to avoid WebSocket cold-start on every phrase.
     ipcMain.handle('synthesize-edge-tts', async (_event, { text, voice }: { text: string; voice: string }) => {

@@ -1,14 +1,157 @@
 /**
- * Gemini API Integration for Conversation Summarization
+ * NVIDIA Build API Integration (DeepSeek V4 Flash)
+ * OpenAI-compatible API via integrate.api.nvidia.com
+ * Drop-in replacement for Gemini — all exported function signatures are unchanged.
  */
 
 import type { Summary } from '../types/session';
 
-const GEMINI_API_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
-const GEMINI_MODEL_CANDIDATES = [
-    import.meta.env.VITE_GEMINI_MODEL || 'gemini-1.5-flash-8b',
-].filter((model): model is string => Boolean(model && model.trim()))
-    .filter((model, index, arr) => arr.indexOf(model) === index);
+const NVIDIA_API_BASE_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
+const NVIDIA_MODEL = import.meta.env.VITE_NVIDIA_MODEL || 'deepseek-ai/deepseek-v4-flash';
+
+// ─── Rate limiter ─────────────────────────────────────────────────────────────
+// NVIDIA free tier: ~40 RPM — we cap at 30 to stay safe
+const MAX_RPM = 30;
+const WINDOW_MS = 60_000;
+const requestTimestamps: number[] = [];
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function acquireRateLimit(): Promise<void> {
+    while (true) {
+        const now = Date.now();
+        while (requestTimestamps.length > 0 && now - requestTimestamps[0] > WINDOW_MS) {
+            requestTimestamps.shift();
+        }
+        if (requestTimestamps.length < MAX_RPM) {
+            requestTimestamps.push(now);
+            return;
+        }
+        const waitMs = WINDOW_MS - (now - requestTimestamps[0]) + 100;
+        console.warn(`[NVIDIA] Rate limit guard: waiting ${Math.ceil(waitMs / 1000)}s (${requestTimestamps.length}/${MAX_RPM} slots used)`);
+        await sleep(waitMs);
+    }
+}
+// ──────────────────────────────────────────────────────────────────────────────
+
+export interface GeminiError {
+    message: string;
+    code?: string;
+}
+
+interface TranscriptChunk {
+    id: number;
+    text: string;
+}
+
+export interface RagCitation {
+    chunkId: number;
+    excerpt: string;
+}
+
+export interface RagAnswer {
+    answer: string;
+    citations: RagCitation[];
+}
+
+/**
+ * Core function: sends a chat message to NVIDIA API and returns the text response.
+ */
+async function callNvidiaAPI(
+    apiKey: string,
+    userPrompt: string,
+    temperature = 0.3,
+    maxTokens = 1024
+): Promise<
+    | { success: true; text: string }
+    | { success: false; status?: number; message: string }
+> {
+    await acquireRateLimit();
+
+    let attempt = 0;
+    const maxAttempts = 3;
+
+    while (attempt < maxAttempts) {
+        try {
+            let result;
+            if (window.electron && window.electron.fetchNvidiaAPI) {
+                result = await window.electron.fetchNvidiaAPI(NVIDIA_API_BASE_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`,
+                    },
+                    body: JSON.stringify({
+                        model: NVIDIA_MODEL,
+                        messages: [{ role: 'user', content: userPrompt }],
+                        temperature,
+                        top_p: 0.9,
+                        max_tokens: maxTokens,
+                        stream: false,
+                    })
+                });
+            } else {
+                // Fallback for non-Electron environment (might hit CORS)
+                const response = await fetch(NVIDIA_API_BASE_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`,
+                    },
+                    body: JSON.stringify({
+                        model: NVIDIA_MODEL,
+                        messages: [{ role: 'user', content: userPrompt }],
+                        temperature,
+                        top_p: 0.9,
+                        max_tokens: maxTokens,
+                        stream: false,
+                    })
+                });
+                const data = await response.json().catch(() => ({}));
+                result = {
+                    ok: response.ok,
+                    status: response.status,
+                    data
+                };
+            }
+
+            if (result.ok) {
+                const text = result.data?.choices?.[0]?.message?.content ?? '';
+                if (!text) return { success: false, message: 'Empty response from API.' };
+                return { success: true, text };
+            }
+
+            const errorData = result.data;
+            const errorMessage = errorData?.message || `API request failed with status ${result.status}`;
+
+            if (result.status === 401 || result.status === 403) {
+                return { success: false, status: result.status, message: 'Invalid NVIDIA API key. Check VITE_NVIDIA_API_KEY in your .env file.' };
+            }
+
+            if (result.status === 429) {
+                attempt++;
+                if (attempt < maxAttempts) {
+                    const delay = Math.pow(2, attempt) * 1000;
+                    console.warn(`[NVIDIA] Rate limit hit, retrying in ${delay / 1000}s...`);
+                    await sleep(delay);
+                    continue;
+                }
+                return { success: false, status: 429, message: 'NVIDIA API rate limit reached. Please wait a moment.' };
+            }
+
+            return { success: false, status: result.status, message: errorMessage };
+        } catch (err) {
+            return {
+                success: false,
+                message: err instanceof Error ? err.message : 'Network error connecting to NVIDIA API.'
+            };
+        }
+    }
+
+    return { success: false, message: 'All retry attempts failed.' };
+}
+
+// ─── Summarization Prompt ─────────────────────────────────────────────────────
 
 const getSummarizationPrompt = (outputLanguage: string = 'en') => {
     const languageInstruction = outputLanguage === 'ml'
@@ -36,156 +179,14 @@ Rules:
 - topics should be 2-5 main themes/subjects discussed (single words or short phrases)
 - actionItems should list any tasks, to-dos, or next steps mentioned (can be empty array if none)
 - Keep all text concise and clear
-- Return ONLY valid JSON, no additional text${languageInstruction}`;
+- Return ONLY valid JSON, no additional text, no markdown code blocks${languageInstruction}`;
 };
 
-export interface GeminiError {
-    message: string;
-    code?: string;
-}
-
-interface TranscriptChunk {
-    id: number;
-    text: string;
-}
-
-export interface RagCitation {
-    chunkId: number;
-    excerpt: string;
-}
-
-export interface RagAnswer {
-    answer: string;
-    citations: RagCitation[];
-}
-
-function extractGeneratedText(data: unknown): string | undefined {
-    if (!data || typeof data !== 'object') return undefined;
-    const candidates = (data as { candidates?: unknown }).candidates;
-    if (!Array.isArray(candidates) || candidates.length === 0) return undefined;
-    const first = candidates[0];
-    if (!first || typeof first !== 'object') return undefined;
-    const content = (first as { content?: unknown }).content;
-    if (!content || typeof content !== 'object') return undefined;
-    const parts = (content as { parts?: unknown }).parts;
-    if (!Array.isArray(parts) || parts.length === 0) return undefined;
-    const text = (parts[0] as { text?: unknown })?.text;
-    return typeof text === 'string' ? text : undefined;
-}
-
-// ─── Rate limiter ─────────────────────────────────────────────────────────────
-// Hard cap: 12 requests/minute (well under the free-tier 15 RPM limit).
-// Uses a sliding-window queue: track timestamps of the last N calls and wait
-// until the oldest one is >60 seconds old before allowing a new one.
-const MAX_RPM = 12;
-const WINDOW_MS = 60_000;
-const requestTimestamps: number[] = [];
-
-async function acquireRateLimit(): Promise<void> {
-    while (true) {
-        const now = Date.now();
-        // Drop timestamps older than the window
-        while (requestTimestamps.length > 0 && now - requestTimestamps[0] > WINDOW_MS) {
-            requestTimestamps.shift();
-        }
-        if (requestTimestamps.length < MAX_RPM) {
-            requestTimestamps.push(now);
-            return; // Slot available — proceed immediately
-        }
-        // Window is full — wait until the oldest slot expires
-        const waitMs = WINDOW_MS - (now - requestTimestamps[0]) + 100; // +100ms buffer
-        console.warn(`[Gemini] Rate limit guard: waiting ${Math.ceil(waitMs / 1000)}s before next request (${requestTimestamps.length}/${MAX_RPM} slots used)`);
-        await sleep(waitMs);
-    }
-}
-// ──────────────────────────────────────────────────────────────────────────────
-
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-async function callGeminiWithFallback(
-    apiKey: string,
-    body: Record<string, unknown>
-): Promise<
-    | { success: true; data: unknown }
-    | { success: false; status?: number; message: string }
-> {
-    let lastErrorMessage = 'All Gemini model attempts failed.';
-    let lastStatus: number | undefined;
-    let sawNotFoundError = false;
-
-    for (const model of GEMINI_MODEL_CANDIDATES) {
-        // Retry up to 3 times with exponential backoff for 429 rate-limit errors
-        let attempt = 0;
-        const maxAttempts = 3;
-
-        while (attempt < maxAttempts) {
-            // Enforce rate limit BEFORE each actual request
-            await acquireRateLimit();
-
-            const response = await fetch(`${GEMINI_API_BASE_URL}/${model}:generateContent?key=${apiKey}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body)
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                return { success: true, data };
-            }
-
-            const errorData = await response.json().catch(() => ({}));
-            const errorMessage = errorData?.error?.message || `API request failed with status ${response.status}`;
-            lastErrorMessage = errorMessage;
-            lastStatus = response.status;
-
-            if (response.status === 401 || response.status === 403) {
-                return { success: false, status: response.status, message: errorMessage };
-            }
-
-            if (response.status === 429) {
-                attempt++;
-                if (attempt < maxAttempts) {
-                    // Exponential backoff: 2s, 4s, then give up
-                    const delay = Math.pow(2, attempt) * 1000;
-                    console.warn(`[Gemini] Rate limit hit on ${model}, retrying in ${delay / 1000}s... (attempt ${attempt}/${maxAttempts - 1})`);
-                    await sleep(delay);
-                    continue;
-                }
-                // Exhausted retries for this model, try next model
-                break;
-            }
-
-            if (response.status === 404) {
-                sawNotFoundError = true;
-                break; // Try next model
-            }
-
-            // Any other error — don't retry
-            break;
-        }
-    }
-
-    if (lastStatus === 429) {
-        return {
-            success: false,
-            status: 429,
-            message: 'Gemini rate limit reached. Please wait a moment before trying again (free tier: 15 requests/minute).'
-        };
-    }
-    if (sawNotFoundError) {
-        return {
-            success: false,
-            status: 404,
-            message: 'No configured Gemini model was found for this key/project. Set VITE_GEMINI_MODEL to an available model.'
-        };
-    }
-
-    return { success: false, status: lastStatus, message: lastErrorMessage };
-}
+// ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * Summarize a conversation transcript using Gemini API
- * @param outputLanguage - Language code for summary output (e.g., 'en', 'ml' for Malayalam)
+ * Summarize a conversation transcript.
+ * Signature unchanged from the Gemini version.
  */
 export async function summarizeConversation(
     transcript: string,
@@ -195,7 +196,7 @@ export async function summarizeConversation(
     if (!apiKey || apiKey.trim() === '') {
         return {
             success: false,
-            error: { message: 'Gemini API key is required. Set VITE_GEMINI_API_KEY in your .env file.', code: 'NO_API_KEY' }
+            error: { message: 'NVIDIA API key is required. Set VITE_NVIDIA_API_KEY in your .env file.', code: 'NO_API_KEY' }
         };
     }
 
@@ -208,62 +209,22 @@ export async function summarizeConversation(
 
     try {
         const prompt = getSummarizationPrompt(outputLanguage).replace('{transcript}', transcript);
+        const result = await callNvidiaAPI(apiKey, prompt, 0.3, 1024);
 
-        const apiResult = await callGeminiWithFallback(apiKey, {
-            contents: [{
-                parts: [{ text: prompt }]
-            }],
-            generationConfig: {
-                temperature: 0.3,
-                topP: 0.8,
-                maxOutputTokens: 1024,
-            }
-        });
-
-        if (!apiResult.success) {
-            if (apiResult.status === 401 || apiResult.status === 403) {
-                return {
-                    success: false,
-                    error: { message: 'Invalid API key. Please check your Gemini API key.', code: 'INVALID_API_KEY' }
-                };
-            }
-
+        if (!result.success) {
             return {
                 success: false,
-                error: { message: apiResult.message, code: 'API_ERROR' }
+                error: { message: result.message, code: 'API_ERROR' }
             };
         }
 
-        const data = apiResult.data;
+        // Strip markdown code fences if present
+        let cleanJson = result.text.trim();
+        cleanJson = cleanJson.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
 
-        // Extract text from Gemini response
-        const generatedText = extractGeneratedText(data);
-
-        if (!generatedText) {
-            return {
-                success: false,
-                error: { message: 'No response generated from API.', code: 'EMPTY_RESPONSE' }
-            };
-        }
-
-        // Parse the JSON response
         try {
-            // Clean up the response - remove any markdown code blocks if present
-            let cleanJson = generatedText.trim();
-            if (cleanJson.startsWith('```json')) {
-                cleanJson = cleanJson.slice(7);
-            }
-            if (cleanJson.startsWith('```')) {
-                cleanJson = cleanJson.slice(3);
-            }
-            if (cleanJson.endsWith('```')) {
-                cleanJson = cleanJson.slice(0, -3);
-            }
-            cleanJson = cleanJson.trim();
-
             const summary: Summary = JSON.parse(cleanJson);
 
-            // Validate the response structure
             if (!summary.briefSummary || !Array.isArray(summary.keyPoints) ||
                 !Array.isArray(summary.topics) || !Array.isArray(summary.actionItems)) {
                 throw new Error('Invalid response structure');
@@ -271,13 +232,11 @@ export async function summarizeConversation(
 
             return { success: true, summary };
         } catch {
-            console.error('[Gemini] Failed to parse response:', generatedText);
-
-            // Fallback: create a basic summary from the raw text
+            console.error('[NVIDIA] Failed to parse response:', result.text);
             return {
                 success: true,
                 summary: {
-                    briefSummary: generatedText.slice(0, 300),
+                    briefSummary: result.text.slice(0, 300),
                     keyPoints: ['Unable to parse structured response'],
                     topics: ['Conversation'],
                     actionItems: []
@@ -285,16 +244,84 @@ export async function summarizeConversation(
             };
         }
     } catch (error) {
-        console.error('[Gemini] Request failed:', error);
         return {
             success: false,
             error: {
-                message: error instanceof Error ? error.message : 'Failed to connect to Gemini API',
+                message: error instanceof Error ? error.message : 'Failed to connect to NVIDIA API',
                 code: 'NETWORK_ERROR'
             }
         };
     }
 }
+
+// ─── Transcript Formatting ────────────────────────────────────────────────────
+
+const getFormattingPrompt = (outputLanguage: string = 'en') => {
+    const languageInstruction = outputLanguage === 'ml'
+        ? '\nIMPORTANT: You MUST translate the entire formatted transcript into Malayalam (മലയാളം). Use Malayalam script.'
+        : outputLanguage !== 'en'
+            ? `\nIMPORTANT: You MUST translate the entire formatted transcript into ${outputLanguage}.`
+            : '';
+
+    return `You are an AI editor. Your task is to clean up a raw, machine-generated speech transcript.
+
+RAW TRANSCRIPT:
+{transcript}
+
+Instructions:
+1. Fix punctuation, capitalization, and grammar.
+2. Remove obvious verbal filler words (um, uh) and false starts/stutters.
+3. Break the text into readable paragraphs where appropriate.
+4. DO NOT summarize the content. Keep the full meaning and detail of the original text.
+5. DO NOT add any markdown formatting like bolding or headers. Return pure, clean text.${languageInstruction}`;
+};
+
+/**
+ * Format a raw transcript into readable paragraphs, and optionally translate it.
+ */
+export async function formatTranscript(
+    transcript: string,
+    apiKey: string,
+    outputLanguage: string = 'en'
+): Promise<{ success: true; formattedTranscript: string } | { success: false; error: GeminiError }> {
+    if (!apiKey || apiKey.trim() === '') {
+        return {
+            success: false,
+            error: { message: 'NVIDIA API key is required.', code: 'NO_API_KEY' }
+        };
+    }
+
+    if (!transcript || transcript.trim().length < 10) {
+        return {
+            success: true,
+            formattedTranscript: transcript // too short to format, just return it
+        };
+    }
+
+    try {
+        const prompt = getFormattingPrompt(outputLanguage).replace('{transcript}', transcript);
+        const result = await callNvidiaAPI(apiKey, prompt, 0.2, 2048);
+
+        if (!result.success) {
+            return {
+                success: false,
+                error: { message: result.message, code: 'API_ERROR' }
+            };
+        }
+
+        return { success: true, formattedTranscript: result.text.trim() };
+    } catch (error) {
+        return {
+            success: false,
+            error: {
+                message: error instanceof Error ? error.message : 'Failed to format transcript',
+                code: 'NETWORK_ERROR'
+            }
+        };
+    }
+}
+
+// ─── RAG Helpers ──────────────────────────────────────────────────────────────
 
 const STOP_WORDS = new Set([
     'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'by', 'for',
@@ -321,38 +348,26 @@ function splitTranscriptIntoChunks(transcript: string, maxWordsPerChunk = 120): 
 
     const chunks: TranscriptChunk[] = [];
     for (let i = 0; i < words.length; i += maxWordsPerChunk) {
-        const chunkWords = words.slice(i, i + maxWordsPerChunk);
-        chunks.push({
-            id: chunks.length + 1,
-            text: chunkWords.join(' ')
-        });
+        chunks.push({ id: chunks.length + 1, text: words.slice(i, i + maxWordsPerChunk).join(' ') });
     }
     return chunks;
 }
 
 function scoreChunk(queryTokens: string[], chunk: TranscriptChunk): number {
     if (queryTokens.length === 0) return 0;
-
     const chunkText = normalizeText(chunk.text);
     const chunkTokens = new Set(tokenize(chunk.text));
     let score = 0;
-
     for (const token of queryTokens) {
-        if (chunkTokens.has(token)) {
-            score += 2;
-        }
-        if (chunkText.includes(token)) {
-            score += 1;
-        }
+        if (chunkTokens.has(token)) score += 2;
+        if (chunkText.includes(token)) score += 1;
     }
-
     return score;
 }
 
 function retrieveRelevantChunks(transcript: string, query: string, maxChunks = 4): TranscriptChunk[] {
     const chunks = splitTranscriptIntoChunks(transcript);
     const queryTokens = tokenize(query);
-
     if (chunks.length === 0) return [];
     if (queryTokens.length === 0) return chunks.slice(0, Math.min(maxChunks, chunks.length));
 
@@ -392,80 +407,40 @@ Instructions:
 - Include 1-3 citations when possible.`;
 }
 
+/**
+ * RAG-based Q&A over a transcript.
+ * Signature unchanged from the Gemini version.
+ */
 export async function askTranscriptRag(
     transcript: string,
     question: string,
     apiKey: string
 ): Promise<{ success: true; result: RagAnswer } | { success: false; error: GeminiError }> {
     if (!apiKey || apiKey.trim() === '') {
-        return {
-            success: false,
-            error: { message: 'Gemini API key is required. Set VITE_GEMINI_API_KEY in your .env file.', code: 'NO_API_KEY' }
-        };
+        return { success: false, error: { message: 'NVIDIA API key is required.', code: 'NO_API_KEY' } };
     }
-
     if (!transcript || transcript.trim().length < 10) {
-        return {
-            success: false,
-            error: { message: 'Transcript is too short for Q&A.', code: 'SHORT_TRANSCRIPT' }
-        };
+        return { success: false, error: { message: 'Transcript is too short for Q&A.', code: 'SHORT_TRANSCRIPT' } };
     }
-
     if (!question || question.trim().length < 3) {
-        return {
-            success: false,
-            error: { message: 'Please ask a more detailed question.', code: 'SHORT_QUESTION' }
-        };
+        return { success: false, error: { message: 'Please ask a more detailed question.', code: 'SHORT_QUESTION' } };
     }
 
     const contextChunks = retrieveRelevantChunks(transcript, question);
     if (contextChunks.length === 0) {
-        return {
-            success: false,
-            error: { message: 'Could not build context from transcript.', code: 'NO_CONTEXT' }
-        };
+        return { success: false, error: { message: 'Could not build context from transcript.', code: 'NO_CONTEXT' } };
     }
 
     try {
         const prompt = getRagPrompt(question, contextChunks);
+        const result = await callNvidiaAPI(apiKey, prompt, 0.2, 768);
 
-        const apiResult = await callGeminiWithFallback(apiKey, {
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: {
-                temperature: 0.2,
-                topP: 0.8,
-                maxOutputTokens: 768,
-            }
-        });
-
-        if (!apiResult.success) {
-            return {
-                success: false,
-                error: { message: apiResult.message, code: 'API_ERROR' }
-            };
+        if (!result.success) {
+            return { success: false, error: { message: result.message, code: 'API_ERROR' } };
         }
 
-        const data = apiResult.data;
-        const generatedText = extractGeneratedText(data);
-
-        if (!generatedText) {
-            return {
-                success: false,
-                error: { message: 'No response generated from API.', code: 'EMPTY_RESPONSE' }
-            };
-        }
-
-        let cleanJson = generatedText.trim();
-        if (cleanJson.startsWith('```json')) {
-            cleanJson = cleanJson.slice(7);
-        }
-        if (cleanJson.startsWith('```')) {
-            cleanJson = cleanJson.slice(3);
-        }
-        if (cleanJson.endsWith('```')) {
-            cleanJson = cleanJson.slice(0, -3);
-        }
-        cleanJson = cleanJson.trim();
+        let cleanJson = result.text.trim();
+        cleanJson = cleanJson.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
 
         const parsed = JSON.parse(cleanJson) as RagAnswer;
 
@@ -473,25 +448,19 @@ export async function askTranscriptRag(
             throw new Error('Invalid RAG response shape');
         }
 
-        const validChunkIds = new Set(contextChunks.map(chunk => chunk.id));
+        const validChunkIds = new Set(contextChunks.map(c => c.id));
         const citations = parsed.citations
-            .filter(citation =>
-                typeof citation.chunkId === 'number' &&
-                validChunkIds.has(citation.chunkId) &&
-                typeof citation.excerpt === 'string' &&
-                citation.excerpt.trim().length > 0
+            .filter(c =>
+                typeof c.chunkId === 'number' &&
+                validChunkIds.has(c.chunkId) &&
+                typeof c.excerpt === 'string' &&
+                c.excerpt.trim().length > 0
             )
             .slice(0, 3);
 
-        return {
-            success: true,
-            result: {
-                answer: parsed.answer.trim(),
-                citations
-            }
-        };
+        return { success: true, result: { answer: parsed.answer.trim(), citations } };
     } catch (error) {
-        console.error('[Gemini][RAG] Request failed:', error);
+        console.error('[NVIDIA][RAG] Request failed:', error);
         return {
             success: false,
             error: {
@@ -503,17 +472,13 @@ export async function askTranscriptRag(
 }
 
 /**
- * Validate a Gemini API key by making a simple test request
+ * Validate an NVIDIA API key by making a minimal test request.
  */
 export async function validateApiKey(apiKey: string): Promise<boolean> {
     if (!apiKey || apiKey.trim() === '') return false;
-
     try {
-        const apiResult = await callGeminiWithFallback(apiKey, {
-            contents: [{ parts: [{ text: 'Hi' }] }],
-            generationConfig: { maxOutputTokens: 10 }
-        });
-        return apiResult.success;
+        const result = await callNvidiaAPI(apiKey, 'Say "ok"', 0.1, 10);
+        return result.success;
     } catch {
         return false;
     }
@@ -521,7 +486,7 @@ export async function validateApiKey(apiKey: string): Promise<boolean> {
 
 export function getStoredApiKey(): string {
     try {
-        return import.meta.env.VITE_GEMINI_API_KEY || '';
+        return import.meta.env.VITE_NVIDIA_API_KEY || '';
     } catch {
         return '';
     }

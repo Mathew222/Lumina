@@ -20,6 +20,10 @@ export interface Session {
      * Backward-compatible: older sessions may not have this field.
      */
     summariesByLanguage?: Record<string, Summary>;
+    /**
+     * Cache formatted transcripts per language.
+     */
+    formattedTranscriptsByLanguage?: Record<string, string>;
     language: string;
     duration: number; // in seconds
 }

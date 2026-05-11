@@ -4,6 +4,7 @@ export interface ElectronAPI {
     showMainWindow: () => void;
     onTranscriptUpdate: (callback: (data: any) => void) => () => void;
     getAudioSources: () => Promise<any[]>;
+    fetchNvidiaAPI: (url: string, options: any) => Promise<any>;
 }
 
 declare global {

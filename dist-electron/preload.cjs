@@ -20,6 +20,10 @@ contextBridge.exposeInMainWorld("electron", {
     const buffer = await ipcRenderer.invoke("fetch-tts-audio", url);
     return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
   },
+  // Make NVIDIA API calls via main process to bypass CORS
+  fetchNvidiaAPI: async (url, options) => {
+    return await ipcRenderer.invoke("fetch-nvidia-api", { url, options });
+  },
   // Microsoft Edge Neural TTS
   synthesizeEdgeTTS: async (text, voice) => {
     const buffer = await ipcRenderer.invoke("synthesize-edge-tts", { text, voice });

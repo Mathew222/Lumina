@@ -1,13 +1,15 @@
 import { useRef, useState } from 'react';
-import { X, Copy, Check, Sparkles, ListChecks, Tag, ClipboardList, FileText, ChevronDown, ChevronUp, Clock, Calendar, Languages, MessageCircle, Send, Quote } from 'lucide-react';
+import { X, Copy, Check, Sparkles, ListChecks, Tag, ClipboardList, FileText, ChevronDown, ChevronUp, Clock, Calendar, Languages, MessageCircle, Send, Quote, Volume2, Square } from 'lucide-react';
 import type { Summary } from '../types/session';
 import { askTranscriptRag, type RagAnswer } from '../utils/gemini';
+import { speakText, stopAudio } from '../utils/tts';
 
 interface SummaryViewProps {
     summary: Summary | null;
     isLoading: boolean;
     error?: string | null;
     transcript?: string;
+    formattedTranscript?: string;
     duration?: number;
     recordedAt?: string;
     onClose: () => void;
@@ -22,6 +24,7 @@ export const SummaryView = ({
     isLoading,
     error,
     transcript,
+    formattedTranscript,
     duration,
     recordedAt,
     onClose,
@@ -39,6 +42,39 @@ export const SummaryView = ({
     const [ragHistory, setRagHistory] = useState<Array<{ question: string; result: RagAnswer }>>([]);
     const lastRagRequestAtRef = useRef(0);
     const ragCacheRef = useRef(new Map<string, RagAnswer>());
+    const [playingTTS, setPlayingTTS] = useState(false);
+
+    const handlePlayTTS = () => {
+        if (playingTTS) {
+            stopAudio();
+            setPlayingTTS(false);
+            return;
+        }
+
+        // Stop any currently playing audio before starting new
+        stopAudio();
+        setPlayingTTS(true);
+
+        const textToRead = formattedTranscript || transcript;
+        const langToUse = formattedTranscript ? currentLanguage : 'en';
+
+        if (!textToRead) {
+            setPlayingTTS(false);
+            return;
+        }
+
+        speakText(
+            textToRead,
+            langToUse,
+            1.0, // normal rate
+            () => {}, // onStart
+            () => setPlayingTTS(false), // onEnd
+            (err) => { // onError
+                console.error('TTS Error:', err);
+                setPlayingTTS(false);
+            }
+        );
+    };
 
     const formatDuration = (seconds?: number) => {
         if (!seconds) return '--:--';
@@ -72,7 +108,7 @@ ${summary.keyPoints.map(p => `• ${p}`).join('\n')}
 
 🏷️ Topics: ${summary.topics.join(', ')}
 ${summary.actionItems.length > 0 ? `\n📌 Action Items:\n${summary.actionItems.map(a => `☐ ${a}`).join('\n')}` : ''}
-${transcript ? `\n📄 Full Transcript:\n${transcript}` : ''}`;
+${formattedTranscript ? `\n📄 Formatted Transcript:\n${formattedTranscript}` : transcript ? `\n📄 Full Transcript:\n${transcript}` : ''}`;
 
         navigator.clipboard.writeText(text).then(() => {
             setCopied(true);
@@ -118,8 +154,8 @@ ${transcript ? `\n📄 Full Transcript:\n${transcript}` : ''}`;
     };
 
     return (
-        <div className="fixed inset-0 bg-black/90 backdrop-blur-xl z-50 flex items-center justify-center p-6">
-            <div className="w-full max-w-3xl max-h-[90vh] bg-gradient-to-b from-gray-900 to-gray-950 rounded-3xl border border-gray-800 shadow-2xl flex flex-col overflow-hidden">
+        <div className="fixed inset-0 bg-gray-950 z-50 flex flex-col">
+            <div className="w-full h-full bg-gradient-to-b from-gray-900 to-gray-950 flex flex-col overflow-hidden">
                 {/* Header */}
                 <div className="flex items-center justify-between p-6 border-b border-gray-800/50">
                     <div className="flex items-center gap-3">
@@ -163,25 +199,48 @@ ${transcript ? `\n📄 Full Transcript:\n${transcript}` : ''}`;
                                 )}
                             </button>
                         )}
-                        {summary && onTranslate && (
+                        {(formattedTranscript || transcript) && (
                             <button
-                                onClick={() => onTranslate(currentLanguage === 'en' ? 'ml' : 'en')}
-                                disabled={isTranslating}
-                                className={`px-4 py-2 rounded-lg transition-colors flex items-center gap-2 text-sm ${isTranslating
-                                    ? 'bg-purple-500/30 cursor-wait'
-                                    : currentLanguage === 'ml'
-                                        ? 'bg-green-500/20 hover:bg-green-500/30 border border-green-500/30'
-                                        : 'bg-gray-800 hover:bg-gray-700'
-                                    }`}
+                                onClick={handlePlayTTS}
+                                className={`px-4 py-2 rounded-lg transition-colors flex items-center gap-2 text-sm ${playingTTS ? 'bg-purple-500/30 text-purple-300 animate-pulse border border-purple-500/30' : 'bg-gray-800 hover:bg-gray-700 text-gray-300'}`}
                             >
-                                <Languages className={`w-4 h-4 ${isTranslating ? 'animate-pulse text-purple-400' : currentLanguage === 'ml' ? 'text-green-400' : 'text-gray-400'}`} />
-                                <span className={currentLanguage === 'ml' ? 'text-green-400' : 'text-gray-300'}>
-                                    {isTranslating ? 'Translating...' : currentLanguage === 'ml' ? 'മലയാളം ✓' : 'മലയാളം'}
-                                </span>
+                                {playingTTS ? (
+                                    <>
+                                        <Square className="w-4 h-4 fill-current" />
+                                        <span>Stop Reading</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Volume2 className="w-4 h-4" />
+                                        <span>Read Transcript</span>
+                                    </>
+                                )}
                             </button>
                         )}
+                        {summary && onTranslate && (
+                            <div className="relative flex items-center gap-2 bg-gray-800 rounded-lg px-3 py-2 border border-gray-700 hover:border-gray-600 focus-within:border-purple-500/50 transition-colors">
+                                <Languages className={`w-4 h-4 ${isTranslating ? 'animate-pulse text-purple-400' : 'text-gray-400'}`} />
+                                {isTranslating ? (
+                                    <span className="text-sm text-purple-400 pr-6">Translating...</span>
+                                ) : (
+                                    <select
+                                        value={currentLanguage}
+                                        onChange={(e) => onTranslate(e.target.value as 'en' | 'ml')}
+                                        disabled={isTranslating}
+                                        className="bg-transparent text-sm text-gray-300 focus:outline-none cursor-pointer appearance-none pr-6"
+                                    >
+                                        <option value="en" className="bg-gray-900">English</option>
+                                        <option value="ml" className="bg-gray-900">Malayalam (മലയാളം)</option>
+                                    </select>
+                                )}
+                                {!isTranslating && <ChevronDown className="w-4 h-4 text-gray-500 absolute right-2 pointer-events-none" />}
+                            </div>
+                        )}
                         <button
-                            onClick={onClose}
+                            onClick={() => {
+                                stopAudio();
+                                onClose();
+                            }}
                             className="p-2 rounded-lg hover:bg-gray-800 transition-colors"
                         >
                             <X className="w-5 h-5 text-gray-400" />
@@ -190,8 +249,9 @@ ${transcript ? `\n📄 Full Transcript:\n${transcript}` : ''}`;
                 </div>
 
                 {/* Content */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                    {isLoading ? (
+                <div className="flex-1 overflow-y-auto">
+                    <div className="max-w-5xl mx-auto w-full p-6 space-y-6">
+                        {isLoading ? (
                         /* Loading State */
                         <div className="space-y-6">
                             <div className="bg-gray-800/50 rounded-2xl p-6 animate-pulse">
@@ -227,7 +287,10 @@ ${transcript ? `\n📄 Full Transcript:\n${transcript}` : ''}`;
                         <div className="bg-red-900/20 border border-red-500/30 rounded-2xl p-6 text-center">
                             <p className="text-red-300">{error}</p>
                             <button
-                                onClick={onClose}
+                                onClick={() => {
+                                    stopAudio();
+                                    onClose();
+                                }}
                                 className="mt-4 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg transition-colors"
                             >
                                 Close
@@ -324,9 +387,20 @@ ${transcript ? `\n📄 Full Transcript:\n${transcript}` : ''}`;
                                     </button>
                                     {showTranscript && (
                                         <div className="px-5 pb-5">
-                                            <p className="text-sm text-gray-400 leading-relaxed whitespace-pre-wrap bg-gray-900/50 rounded-xl p-4 max-h-64 overflow-y-auto">
-                                                {transcript}
-                                            </p>
+                                            {formattedTranscript ? (
+                                                <div className="space-y-4">
+                                                    {formattedTranscript.split('\n\n').map((paragraph, i) => (
+                                                        <p key={i} className="text-sm text-gray-300 leading-relaxed bg-gray-900/50 rounded-xl p-4">
+                                                            {paragraph}
+                                                        </p>
+                                                    ))}
+                                                    <p className="text-xs text-gray-500 italic mt-2">✨ Transcript formatted & translated by AI</p>
+                                                </div>
+                                            ) : (
+                                                <p className="text-sm text-gray-400 leading-relaxed whitespace-pre-wrap bg-gray-900/50 rounded-xl p-4 max-h-64 overflow-y-auto">
+                                                    {transcript}
+                                                </p>
+                                            )}
                                         </div>
                                     )}
                                 </div>
@@ -415,11 +489,15 @@ ${transcript ? `\n📄 Full Transcript:\n${transcript}` : ''}`;
                 {/* Footer */}
                 <div className="p-4 border-t border-gray-800/50">
                     <button
-                        onClick={onClose}
+                        onClick={() => {
+                            stopAudio();
+                            onClose();
+                        }}
                         className="w-full py-3 bg-gray-800 hover:bg-gray-700 text-gray-300 font-medium rounded-xl transition-colors"
                     >
                         Close Summary
                     </button>
+                    </div>
                 </div>
             </div>
         </div>

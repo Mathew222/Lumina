@@ -7,7 +7,7 @@ import { translateText, translateInterim, LANGUAGES, clearTranslationContext } f
 import type { SupportedLanguage } from '../utils/translate';
 import type { Session, Summary } from '../types/session';
 import { warmVoice } from '../utils/tts';
-import { summarizeConversation, getStoredApiKey } from '../utils/gemini';
+import { summarizeConversation, formatTranscript, getStoredApiKey } from '../utils/gemini';
 import { saveSession, generateSessionId, getSession } from '../utils/sessionStorage';
 import { SummaryView } from './SummaryView';
 import { SessionHistory } from './SessionHistory';
@@ -49,6 +49,7 @@ export const Dashboard = () => {
     const [isSummarizing, setIsSummarizing] = useState(false);
     const [summaryError, setSummaryError] = useState<string | null>(null);
     const [currentTranscript, setCurrentTranscript] = useState<string>('');
+    const [currentFormattedTranscript, setCurrentFormattedTranscript] = useState<string>('');
     const [currentRecordedAt, setCurrentRecordedAt] = useState<string>('');
     const [currentDuration, setCurrentDuration] = useState<number>(0);
     const [currentSessionId, setCurrentSessionId] = useState<string>('');
@@ -518,6 +519,7 @@ export const Dashboard = () => {
         // Store transcript and metadata for display
         setCurrentSessionId(sessionId);
         setCurrentTranscript(fullTranscript);
+        setCurrentFormattedTranscript(''); // reset until generated
         setCurrentRecordedAt(new Date(startTime).toISOString());
         setCurrentDuration(duration);
 
@@ -527,38 +529,62 @@ export const Dashboard = () => {
         setSummaryError(null);
 
         // Get summary from Gemini (with selected language)
-        const result = await summarizeConversation(fullTranscript, geminiApiKey, summaryLanguage);
+        // AND fetch formatted transcript in parallel
+        try {
+            const [summaryResult, formatResult] = await Promise.all([
+                summarizeConversation(fullTranscript, geminiApiKey, summaryLanguage),
+                formatTranscript(fullTranscript, geminiApiKey, summaryLanguage)
+            ]);
 
-        if (result.success) {
-            setCurrentSummary(result.summary);
-            // Update session with summary
-            session.summary = result.summary;
-            session.summariesByLanguage = {
-                ...(session.summariesByLanguage || {}),
-                [summaryLanguage]: result.summary
-            };
-            saveSession(session);
+            if (summaryResult.success) {
+                setCurrentSummary(summaryResult.summary);
+                // Update session with summary
+                session.summary = summaryResult.summary;
+                session.summariesByLanguage = {
+                    ...(session.summariesByLanguage || {}),
+                    [summaryLanguage]: summaryResult.summary
+                };
 
-            // Save to Supabase
-            saveSummaryToSupabase(
-                sessionId,
-                fullTranscript,
-                JSON.stringify(result.summary),
-                summaryLanguage
-            );
-        } else {
-            setSummaryError(result.error.message);
+                if (formatResult.success) {
+                    setCurrentFormattedTranscript(formatResult.formattedTranscript);
+                    session.formattedTranscriptsByLanguage = {
+                        ...(session.formattedTranscriptsByLanguage || {}),
+                        [summaryLanguage]: formatResult.formattedTranscript
+                    };
+                }
+
+                try {
+                    saveSession(session);
+                } catch (e: any) {
+                    console.warn("Storage warning:", e.message);
+                }
+
+                // Save to Supabase
+                saveSummaryToSupabase(
+                    sessionId,
+                    fullTranscript,
+                    JSON.stringify(summaryResult.summary),
+                    summaryLanguage
+                );
+            } else {
+                setSummaryError(summaryResult.error.message);
+            }
+        } catch (err: any) {
+            console.error("Summarization error:", err);
+            setSummaryError("An unexpected error occurred while generating the summary.");
+        } finally {
+            setIsSummarizing(false);
+            isSummarizingRef.current = false;
         }
-
-        setIsSummarizing(false);
-        isSummarizingRef.current = false;
     }, [recordingStartTime, geminiApiKey, targetLanguage, summaryLanguage]);
 
     const handleSelectSession = (session: Session) => {
         setCurrentSessionId(session.id);
         const cached = session.summariesByLanguage?.en || session.summary;
+        const cachedFormatted = session.formattedTranscriptsByLanguage?.en || '';
         setCurrentSummary(cached);
         setCurrentTranscript(session.transcript);
+        setCurrentFormattedTranscript(cachedFormatted);
         setCurrentRecordedAt(session.startedAt);
         setCurrentDuration(session.duration);
         setSummaryLanguage('en'); // Reset language for historical sessions
@@ -576,46 +602,87 @@ export const Dashboard = () => {
         setIsSummarizing(true);
         setSummaryError(null);
 
-        // Cache-first: reuse previously generated summary for this session+language
-        if (currentSessionId) {
-            const stored = getSession(currentSessionId);
-            const cached = stored?.summariesByLanguage?.[language];
-            if (cached) {
-                setCurrentSummary(cached);
-                setIsSummarizing(false);
-                return;
-            }
-        }
+        try {
+            // Cache-first logic
+            let summaryPromise: Promise<any> | null = null;
+            let formatPromise: Promise<any> | null = null;
+            let finalSummary = null;
+            let finalFormatted = '';
 
-        const result = await summarizeConversation(currentTranscript, geminiApiKey, language);
-
-        if (result.success) {
-            setCurrentSummary(result.summary);
-            // Persist cache to session storage so we don't call Gemini again next time.
             if (currentSessionId) {
                 const stored = getSession(currentSessionId);
-                if (stored) {
-                    stored.summary = result.summary;
-                    stored.summariesByLanguage = {
-                        ...(stored.summariesByLanguage || {}),
-                        [language]: result.summary
-                    };
-                    saveSession(stored);
+                const cachedSummary = stored?.summariesByLanguage?.[language];
+                const cachedFormatted = stored?.formattedTranscriptsByLanguage?.[language];
+                
+                if (cachedSummary) {
+                    finalSummary = cachedSummary;
+                } else {
+                    summaryPromise = summarizeConversation(currentTranscript, geminiApiKey, language);
                 }
-            }
-            if (currentSessionId) {
-                saveSummaryToSupabase(
-                    currentSessionId,
-                    currentTranscript,
-                    JSON.stringify(result.summary),
-                    language
-                );
-            }
-        } else {
-            setSummaryError(result.error.message);
-        }
 
-        setIsSummarizing(false);
+                if (cachedFormatted) {
+                    finalFormatted = cachedFormatted;
+                } else {
+                    formatPromise = formatTranscript(currentTranscript, geminiApiKey, language);
+                }
+            } else {
+                summaryPromise = summarizeConversation(currentTranscript, geminiApiKey, language);
+                formatPromise = formatTranscript(currentTranscript, geminiApiKey, language);
+            }
+
+            // Only wait for what we actually need to fetch
+            const [summaryResult, formatResult] = await Promise.all([
+                summaryPromise || Promise.resolve({ success: true, summary: finalSummary }),
+                formatPromise || Promise.resolve({ success: true, formattedTranscript: finalFormatted })
+            ]);
+
+            if (summaryResult.success) {
+                setCurrentSummary(summaryResult.summary);
+                if (formatResult.success) {
+                    setCurrentFormattedTranscript(formatResult.formattedTranscript);
+                } else {
+                    setCurrentFormattedTranscript('');
+                }
+                
+                // Persist cache to session storage so we don't call Gemini again next time.
+                if (currentSessionId) {
+                    const stored = getSession(currentSessionId);
+                    if (stored) {
+                        stored.summary = summaryResult.summary;
+                        stored.summariesByLanguage = {
+                            ...(stored.summariesByLanguage || {}),
+                            [language]: summaryResult.summary
+                        };
+                        if (formatResult.success) {
+                            stored.formattedTranscriptsByLanguage = {
+                                ...(stored.formattedTranscriptsByLanguage || {}),
+                                [language]: formatResult.formattedTranscript
+                            };
+                        }
+                        try {
+                            saveSession(stored);
+                        } catch (e: any) {
+                            console.warn("Storage warning:", e.message);
+                        }
+                    }
+                }
+                if (currentSessionId) {
+                    saveSummaryToSupabase(
+                        currentSessionId,
+                        currentTranscript,
+                        JSON.stringify(summaryResult.summary),
+                        language
+                    );
+                }
+            } else {
+                setSummaryError(summaryResult.error.message);
+            }
+        } catch (err: any) {
+            console.error("Translation error:", err);
+            setSummaryError("An unexpected error occurred during translation.");
+        } finally {
+            setIsSummarizing(false);
+        }
     }, [currentTranscript, geminiApiKey, isSummarizing]);
 
     // Sync state to widget
@@ -1118,6 +1185,7 @@ export const Dashboard = () => {
                     isLoading={isSummarizing}
                     error={summaryError}
                     transcript={currentTranscript}
+                    formattedTranscript={currentFormattedTranscript}
                     duration={currentDuration}
                     recordedAt={currentRecordedAt}
                     geminiApiKey={geminiApiKey}
