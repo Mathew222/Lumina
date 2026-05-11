@@ -6,8 +6,7 @@ import type { Summary } from '../types/session';
 
 const GEMINI_API_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 const GEMINI_MODEL_CANDIDATES = [
-    import.meta.env.VITE_GEMINI_MODEL,
-    'gemini-2.0-flash',
+    import.meta.env.VITE_GEMINI_MODEL || 'gemini-1.5-flash-8b',
 ].filter((model): model is string => Boolean(model && model.trim()))
     .filter((model, index, arr) => arr.indexOf(model) === index);
 
@@ -74,6 +73,35 @@ function extractGeneratedText(data: unknown): string | undefined {
     return typeof text === 'string' ? text : undefined;
 }
 
+// ─── Rate limiter ─────────────────────────────────────────────────────────────
+// Hard cap: 12 requests/minute (well under the free-tier 15 RPM limit).
+// Uses a sliding-window queue: track timestamps of the last N calls and wait
+// until the oldest one is >60 seconds old before allowing a new one.
+const MAX_RPM = 12;
+const WINDOW_MS = 60_000;
+const requestTimestamps: number[] = [];
+
+async function acquireRateLimit(): Promise<void> {
+    while (true) {
+        const now = Date.now();
+        // Drop timestamps older than the window
+        while (requestTimestamps.length > 0 && now - requestTimestamps[0] > WINDOW_MS) {
+            requestTimestamps.shift();
+        }
+        if (requestTimestamps.length < MAX_RPM) {
+            requestTimestamps.push(now);
+            return; // Slot available — proceed immediately
+        }
+        // Window is full — wait until the oldest slot expires
+        const waitMs = WINDOW_MS - (now - requestTimestamps[0]) + 100; // +100ms buffer
+        console.warn(`[Gemini] Rate limit guard: waiting ${Math.ceil(waitMs / 1000)}s before next request (${requestTimestamps.length}/${MAX_RPM} slots used)`);
+        await sleep(waitMs);
+    }
+}
+// ──────────────────────────────────────────────────────────────────────────────
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 async function callGeminiWithFallback(
     apiKey: string,
     body: Record<string, unknown>
@@ -83,43 +111,65 @@ async function callGeminiWithFallback(
 > {
     let lastErrorMessage = 'All Gemini model attempts failed.';
     let lastStatus: number | undefined;
-    let sawQuotaError = false;
     let sawNotFoundError = false;
 
     for (const model of GEMINI_MODEL_CANDIDATES) {
-        const response = await fetch(`${GEMINI_API_BASE_URL}/${model}:generateContent?key=${apiKey}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
+        // Retry up to 3 times with exponential backoff for 429 rate-limit errors
+        let attempt = 0;
+        const maxAttempts = 3;
 
-        if (response.ok) {
-            const data = await response.json();
-            return { success: true, data };
-        }
+        while (attempt < maxAttempts) {
+            // Enforce rate limit BEFORE each actual request
+            await acquireRateLimit();
 
-        const errorData = await response.json().catch(() => ({}));
-        const errorMessage = errorData?.error?.message || `API request failed with status ${response.status}`;
-        lastErrorMessage = errorMessage;
-        lastStatus = response.status;
+            const response = await fetch(`${GEMINI_API_BASE_URL}/${model}:generateContent?key=${apiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
 
-        if (response.status === 401 || response.status === 403) {
-            return { success: false, status: response.status, message: errorMessage };
-        }
+            if (response.ok) {
+                const data = await response.json();
+                return { success: true, data };
+            }
 
-        if (response.status === 429) {
-            sawQuotaError = true;
-        }
-        if (response.status === 404) {
-            sawNotFoundError = true;
+            const errorData = await response.json().catch(() => ({}));
+            const errorMessage = errorData?.error?.message || `API request failed with status ${response.status}`;
+            lastErrorMessage = errorMessage;
+            lastStatus = response.status;
+
+            if (response.status === 401 || response.status === 403) {
+                return { success: false, status: response.status, message: errorMessage };
+            }
+
+            if (response.status === 429) {
+                attempt++;
+                if (attempt < maxAttempts) {
+                    // Exponential backoff: 2s, 4s, then give up
+                    const delay = Math.pow(2, attempt) * 1000;
+                    console.warn(`[Gemini] Rate limit hit on ${model}, retrying in ${delay / 1000}s... (attempt ${attempt}/${maxAttempts - 1})`);
+                    await sleep(delay);
+                    continue;
+                }
+                // Exhausted retries for this model, try next model
+                break;
+            }
+
+            if (response.status === 404) {
+                sawNotFoundError = true;
+                break; // Try next model
+            }
+
+            // Any other error — don't retry
+            break;
         }
     }
 
-    if (sawQuotaError) {
+    if (lastStatus === 429) {
         return {
             success: false,
             status: 429,
-            message: 'Gemini quota/rate limit reached for available models. Please retry shortly or switch project quota.'
+            message: 'Gemini rate limit reached. Please wait a moment before trying again (free tier: 15 requests/minute).'
         };
     }
     if (sawNotFoundError) {
