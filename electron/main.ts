@@ -44,6 +44,7 @@ async function getOrCreateTTS(voice: string): Promise<MsEdgeTTS> {
 
 let mainWindow: BrowserWindow | null;
 let overlayWindow: BrowserWindow | null;
+let floatingWidgetWindow: BrowserWindow | null = null;
 
 function createMainWindow() {
     mainWindow = new BrowserWindow({
@@ -79,7 +80,39 @@ function createMainWindow() {
         if (overlayWindow) {
             overlayWindow.close();
         }
+        if (floatingWidgetWindow) {
+            floatingWidgetWindow.close();
+        }
         app.quit();
+    });
+
+    mainWindow.on('blur', () => {
+        if (!floatingWidgetWindow && mainWindow && !mainWindow.isFocused() && !mainWindow.isMinimized()) {
+            // Give a tiny delay to ensure we're not just switching to the overlay or another internal window
+            setTimeout(() => {
+                if (mainWindow && !mainWindow.isFocused() && !floatingWidgetWindow) {
+                    createFloatingWidgetWindow();
+                }
+            }, 100);
+        }
+    });
+
+    mainWindow.on('minimize', () => {
+        if (!floatingWidgetWindow) {
+            createFloatingWidgetWindow();
+        }
+    });
+
+    mainWindow.on('focus', () => {
+        if (floatingWidgetWindow) {
+            floatingWidgetWindow.close();
+        }
+    });
+
+    mainWindow.on('restore', () => {
+        if (floatingWidgetWindow) {
+            floatingWidgetWindow.close();
+        }
     });
 }
 
@@ -116,6 +149,40 @@ function createOverlayWindow() {
     });
 }
 
+function createFloatingWidgetWindow() {
+    if (floatingWidgetWindow) return;
+
+    const { width } = screen.getPrimaryDisplay().workAreaSize;
+
+    floatingWidgetWindow = new BrowserWindow({
+        width: 380,
+        height: 80,
+        x: width - 400, // Top right with some margin
+        y: 20,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        hasShadow: false,
+        focusable: false, // Don't steal focus
+        webPreferences: {
+            preload: path.join(__dirname, 'preload.cjs'),
+            nodeIntegration: false,
+            contextIsolation: true,
+        },
+    });
+
+    const startUrl = process.env.ELECTRON_START_URL
+        ? `${process.env.ELECTRON_START_URL}?mode=widget`
+        : `file://${path.join(__dirname, '../dist/index.html')}?mode=widget`;
+
+    floatingWidgetWindow.loadURL(startUrl);
+
+    floatingWidgetWindow.on('closed', () => {
+        floatingWidgetWindow = null;
+    });
+}
+
 app.whenReady().then(() => {
     createMainWindow();
 
@@ -131,6 +198,14 @@ app.whenReady().then(() => {
     ipcMain.on('send-transcript', (_event, data) => {
         if (overlayWindow) {
             overlayWindow.webContents.send('transcript-update', data);
+        }
+    });
+
+    ipcMain.on('show-main-window', () => {
+        if (mainWindow) {
+            if (mainWindow.isMinimized()) mainWindow.restore();
+            mainWindow.show();
+            mainWindow.focus();
         }
     });
 

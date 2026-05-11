@@ -1,19 +1,24 @@
 import { useState, useEffect } from 'react';
 import { Dashboard } from './components/Dashboard';
 import { SubtitlePopup } from './components/SubtitlePopup';
+import { FloatingWidget } from './components/FloatingWidget';
 
 function App() {
-  const [isPopup, setIsPopup] = useState(false);
+  const [mode, setMode] = useState<'dashboard' | 'popup' | 'widget'>('dashboard');
 
   useEffect(() => {
-    // specific check for popup mode
     const params = new URLSearchParams(window.location.search);
-    if (params.get('mode') === 'popup') {
-      setIsPopup(true);
+    const urlMode = params.get('mode');
+    if (urlMode === 'popup') {
+      setMode('popup');
+    } else if (urlMode === 'widget') {
+      setMode('widget');
     }
   }, []);
 
-  return isPopup ? <SubtitlePopup /> : <Dashboard />;
+  if (mode === 'popup') return <SubtitlePopup />;
+  if (mode === 'widget') return <FloatingWidget />;
+  return <Dashboard />;
 }
 
 export default App;

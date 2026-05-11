@@ -21096,6 +21096,7 @@ async function getOrCreateTTS(voice) {
 }
 var mainWindow;
 var overlayWindow;
+var floatingWidgetWindow = null;
 function createMainWindow() {
   mainWindow = new import_electron.BrowserWindow({
     width: 900,
@@ -21120,7 +21121,34 @@ function createMainWindow() {
     if (overlayWindow) {
       overlayWindow.close();
     }
+    if (floatingWidgetWindow) {
+      floatingWidgetWindow.close();
+    }
     import_electron.app.quit();
+  });
+  mainWindow.on("blur", () => {
+    if (!floatingWidgetWindow && mainWindow && !mainWindow.isFocused() && !mainWindow.isMinimized()) {
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isFocused() && !floatingWidgetWindow) {
+          createFloatingWidgetWindow();
+        }
+      }, 100);
+    }
+  });
+  mainWindow.on("minimize", () => {
+    if (!floatingWidgetWindow) {
+      createFloatingWidgetWindow();
+    }
+  });
+  mainWindow.on("focus", () => {
+    if (floatingWidgetWindow) {
+      floatingWidgetWindow.close();
+    }
+  });
+  mainWindow.on("restore", () => {
+    if (floatingWidgetWindow) {
+      floatingWidgetWindow.close();
+    }
   });
 }
 function createOverlayWindow() {
@@ -21152,6 +21180,34 @@ function createOverlayWindow() {
     overlayWindow = null;
   });
 }
+function createFloatingWidgetWindow() {
+  if (floatingWidgetWindow) return;
+  const { width } = import_electron.screen.getPrimaryDisplay().workAreaSize;
+  floatingWidgetWindow = new import_electron.BrowserWindow({
+    width: 380,
+    height: 80,
+    x: width - 400,
+    // Top right with some margin
+    y: 20,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    hasShadow: false,
+    focusable: false,
+    // Don't steal focus
+    webPreferences: {
+      preload: import_path.default.join(__dirname, "preload.cjs"),
+      nodeIntegration: false,
+      contextIsolation: true
+    }
+  });
+  const startUrl = process.env.ELECTRON_START_URL ? `${process.env.ELECTRON_START_URL}?mode=widget` : `file://${import_path.default.join(__dirname, "../dist/index.html")}?mode=widget`;
+  floatingWidgetWindow.loadURL(startUrl);
+  floatingWidgetWindow.on("closed", () => {
+    floatingWidgetWindow = null;
+  });
+}
 import_electron.app.whenReady().then(() => {
   createMainWindow();
   import_electron.ipcMain.on("toggle-overlay", () => {
@@ -21165,6 +21221,13 @@ import_electron.app.whenReady().then(() => {
   import_electron.ipcMain.on("send-transcript", (_event, data) => {
     if (overlayWindow) {
       overlayWindow.webContents.send("transcript-update", data);
+    }
+  });
+  import_electron.ipcMain.on("show-main-window", () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
     }
   });
   import_electron.ipcMain.handle("get-audio-sources", async () => {

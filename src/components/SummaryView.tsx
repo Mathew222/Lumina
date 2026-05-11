@@ -1,6 +1,7 @@
-import { useState } from 'react';
-import { X, Copy, Check, Sparkles, ListChecks, Tag, ClipboardList, FileText, ChevronDown, ChevronUp, Clock, Calendar, Languages } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { X, Copy, Check, Sparkles, ListChecks, Tag, ClipboardList, FileText, ChevronDown, ChevronUp, Clock, Calendar, Languages, MessageCircle, Send, Quote } from 'lucide-react';
 import type { Summary } from '../types/session';
+import { askTranscriptRag, type RagAnswer } from '../utils/gemini';
 
 interface SummaryViewProps {
     summary: Summary | null;
@@ -10,6 +11,7 @@ interface SummaryViewProps {
     duration?: number;
     recordedAt?: string;
     onClose: () => void;
+    geminiApiKey?: string;
     onTranslate?: (language: 'en' | 'ml') => void;
     isTranslating?: boolean;
     currentLanguage?: 'en' | 'ml';
@@ -23,12 +25,20 @@ export const SummaryView = ({
     duration,
     recordedAt,
     onClose,
+    geminiApiKey = '',
     onTranslate,
     isTranslating = false,
     currentLanguage = 'en'
 }: SummaryViewProps) => {
+    const RAG_COOLDOWN_MS = 8000;
     const [copied, setCopied] = useState(false);
     const [showTranscript, setShowTranscript] = useState(false);
+    const [question, setQuestion] = useState('');
+    const [ragLoading, setRagLoading] = useState(false);
+    const [ragError, setRagError] = useState<string | null>(null);
+    const [ragHistory, setRagHistory] = useState<Array<{ question: string; result: RagAnswer }>>([]);
+    const lastRagRequestAtRef = useRef(0);
+    const ragCacheRef = useRef(new Map<string, RagAnswer>());
 
     const formatDuration = (seconds?: number) => {
         if (!seconds) return '--:--';
@@ -68,6 +78,43 @@ ${transcript ? `\n📄 Full Transcript:\n${transcript}` : ''}`;
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
         });
+    };
+
+    const handleAskQuestion = async () => {
+        if (!transcript || !question.trim() || ragLoading) return;
+
+        const now = Date.now();
+        const remainingMs = RAG_COOLDOWN_MS - (now - lastRagRequestAtRef.current);
+        if (remainingMs > 0) {
+            setRagError(`Please wait ${Math.ceil(remainingMs / 1000)}s before asking another question.`);
+            return;
+        }
+
+        setRagLoading(true);
+        setRagError(null);
+        const userQuestion = question.trim();
+        const cacheKey = userQuestion.toLowerCase();
+
+        const cached = ragCacheRef.current.get(cacheKey);
+        if (cached) {
+            setRagHistory(prev => [...prev, { question: userQuestion, result: cached }]);
+            setQuestion('');
+            setRagLoading(false);
+            return;
+        }
+
+        lastRagRequestAtRef.current = now;
+
+        const result = await askTranscriptRag(transcript, userQuestion, geminiApiKey);
+        if (result.success) {
+            ragCacheRef.current.set(cacheKey, result.result);
+            setRagHistory(prev => [...prev, { question: userQuestion, result: result.result }]);
+            setQuestion('');
+        } else {
+            setRagError(result.error.message);
+        }
+
+        setRagLoading(false);
     };
 
     return (
@@ -282,6 +329,81 @@ ${transcript ? `\n📄 Full Transcript:\n${transcript}` : ''}`;
                                             </p>
                                         </div>
                                     )}
+                                </div>
+                            )}
+
+                            {/* Transcript Q&A (RAG) */}
+                            {transcript && (
+                                <div className="bg-gray-800/30 border border-gray-700/50 rounded-2xl p-5">
+                                    <div className="flex items-center gap-2 mb-4">
+                                        <MessageCircle className="w-5 h-5 text-cyan-400" />
+                                        <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">Ask About This Transcript</h3>
+                                    </div>
+
+                                    <div className="flex gap-2 mb-3">
+                                        <input
+                                            value={question}
+                                            onChange={(e) => setQuestion(e.target.value)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                    e.preventDefault();
+                                                    handleAskQuestion();
+                                                }
+                                            }}
+                                            placeholder="Ask a topic question (e.g. What did we decide about API architecture?)"
+                                            className="flex-1 px-4 py-2 bg-gray-900/60 border border-gray-700 rounded-lg text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-cyan-500"
+                                        />
+                                        <button
+                                            onClick={handleAskQuestion}
+                                            disabled={ragLoading || !question.trim()}
+                                            className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors ${ragLoading || !question.trim()
+                                                ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                                                : 'bg-cyan-600/80 hover:bg-cyan-600 text-white'
+                                                }`}
+                                        >
+                                            <Send className="w-4 h-4" />
+                                            {ragLoading ? 'Asking...' : 'Ask'}
+                                        </button>
+                                    </div>
+
+                                    {!geminiApiKey && (
+                                        <p className="text-xs text-yellow-300 mb-3">
+                                            Set `VITE_GEMINI_API_KEY` in your `.env` file to use transcript Q&A.
+                                        </p>
+                                    )}
+
+                                    {ragError && (
+                                        <p className="text-xs text-red-300 mb-3">{ragError}</p>
+                                    )}
+
+                                    <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                                        {ragHistory.length === 0 ? (
+                                            <p className="text-xs text-gray-500">
+                                                Ask questions about topics discussed, decisions made, or action items in this transcript.
+                                            </p>
+                                        ) : (
+                                            ragHistory.map((item, index) => (
+                                                <div key={`${item.question}-${index}`} className="bg-gray-900/50 border border-gray-700/60 rounded-xl p-4 space-y-2">
+                                                    <p className="text-xs uppercase tracking-wider text-cyan-400">Q</p>
+                                                    <p className="text-sm text-gray-200">{item.question}</p>
+                                                    <p className="text-xs uppercase tracking-wider text-purple-400 pt-2">A</p>
+                                                    <p className="text-sm text-gray-300 leading-relaxed">{item.result.answer}</p>
+                                                    {item.result.citations.length > 0 && (
+                                                        <div className="pt-1 space-y-1">
+                                                            {item.result.citations.map((citation, citationIndex) => (
+                                                                <div key={`${citation.chunkId}-${citationIndex}`} className="flex items-start gap-2 text-xs text-gray-400">
+                                                                    <Quote className="w-3 h-3 mt-0.5 text-gray-500" />
+                                                                    <span>
+                                                                        <span className="text-gray-500">Chunk {citation.chunkId}:</span> {citation.excerpt}
+                                                                    </span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
                                 </div>
                             )}
                         </>

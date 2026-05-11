@@ -14,48 +14,11 @@ export const LANGUAGES: { code: SupportedLanguage; name: string; nativeName: str
 
 const translationCache = new Map<string, string>();
 const pendingRequests = new Map<string, Promise<string>>();
+// NOTE: We intentionally do NOT use Gemini here to avoid quota/rate-limit errors.
 
 // ────────────────────────────────────────────────
 // API helpers
 // ────────────────────────────────────────────────
-
-function getGeminiApiKey(): string {
-    try {
-        return import.meta.env.VITE_GEMINI_API_KEY ||
-            localStorage.getItem('lumina_gemini_api_key') || '';
-    } catch { return ''; }
-}
-
-async function geminiTranslate(text: string, targetLang: SupportedLanguage): Promise<string> {
-    const apiKey = getGeminiApiKey();
-    if (!apiKey) throw new Error('No Gemini key');
-
-    const langDesc = targetLang === 'ml'
-        ? 'Malayalam (മലയാളം) — use natural, modern, conversational Malayalam. Avoid archaic or overly formal words.'
-        : targetLang;
-
-    const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-        {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{
-                    parts: [{
-                        text:
-                            `Translate the following English text to ${langDesc}.\nReturn ONLY the translated text — no quotes, no explanation, nothing else.\n\nText: ${text}`
-                    }]
-                }],
-                generationConfig: { temperature: 0.1, maxOutputTokens: 1024 }
-            })
-        }
-    );
-    if (!res.ok) throw new Error(`Gemini ${res.status}`);
-    const data = await res.json();
-    const out = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-    if (!out) throw new Error('Empty response');
-    return out;
-}
 
 async function googleTranslate(text: string, targetLang: SupportedLanguage, timeoutMs = 3000): Promise<string> {
     const ctrl = new AbortController();
@@ -78,7 +41,7 @@ async function googleTranslate(text: string, targetLang: SupportedLanguage, time
 
 /**
  * Translate full sentences/phrases.
- * Uses Gemini for accurate, natural Malayalam; falls back to Google Translate.
+ * Uses Google Translate only (no Gemini).
  */
 export async function translateText(
     text: string,
@@ -92,19 +55,17 @@ export async function translateText(
     if (pendingRequests.has(key)) return pendingRequests.get(key)!;
 
     const promise = (async () => {
-        // Try Gemini first (best quality for Malayalam)
-        try {
-            const result = await geminiTranslate(text, targetLang);
-            translationCache.set(key, result);
-            return result;
-        } catch (e) {
-            console.warn('[Translation] Gemini failed, falling back to Google:', e);
-        }
-        // Google Translate fallback
         try {
             const result = await googleTranslate(text, targetLang);
             translationCache.set(key, result);
             return result;
+        } catch {
+            // Final fallback: return original text
+        }
+
+        // Final fallback
+        try {
+            return text;
         } catch {
             return text;
         }

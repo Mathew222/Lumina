@@ -55,12 +55,18 @@
     npm install
     ```
 
-3.  **Run in development mode:**
+3.  **Configure environment variables:**
+    Create a `.env` file in the project root:
+    ```bash
+    VITE_GEMINI_API_KEY=your_gemini_api_key_here
+    ```
+
+4.  **Run in development mode:**
     ```bash
     npm run electron:dev
     ```
 
-4.  **Build for production:**
+5.  **Build for production:**
     ```bash
     npm run electron:build
     ```

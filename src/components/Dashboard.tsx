@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Mic, Globe, ChevronDown, Settings, Type, Palette, Circle, Square, History, Key, Sparkles, X, Volume2, VolumeX, Gauge } from 'lucide-react';
+import { Mic, Globe, ChevronDown, Settings, Type, Palette, Circle, Square, History, Volume2, VolumeX, Gauge } from 'lucide-react';
 import { useMalayalamTTS } from '../hooks/useMalayalamTTS';
 import { useHybridSpeechRecognition } from '../hooks/useHybridSpeechRecognition';
 import { BROADCAST_CHANNEL_NAME, sendMessage } from '../utils/broadcast';
@@ -7,8 +7,8 @@ import { translateText, translateInterim, LANGUAGES, clearTranslationContext } f
 import type { SupportedLanguage } from '../utils/translate';
 import type { Session, Summary } from '../types/session';
 import { warmVoice } from '../utils/tts';
-import { summarizeConversation, getStoredApiKey, setStoredApiKey } from '../utils/gemini';
-import { saveSession, generateSessionId } from '../utils/sessionStorage';
+import { summarizeConversation, getStoredApiKey } from '../utils/gemini';
+import { saveSession, generateSessionId, getSession } from '../utils/sessionStorage';
 import { SummaryView } from './SummaryView';
 import { SessionHistory } from './SessionHistory';
 import { saveSummaryToSupabase } from '../utils/supabase';
@@ -57,8 +57,7 @@ export const Dashboard = () => {
     const [showSessionHistory, setShowSessionHistory] = useState(false);
 
     // API Key State
-    const [geminiApiKey, setGeminiApiKey] = useState(() => getStoredApiKey());
-    const [showApiKeyInput, setShowApiKeyInput] = useState(false);
+    const geminiApiKey = getStoredApiKey();
     const [summaryLanguage, setSummaryLanguage] = useState<'en' | 'ml'>('en'); // en = English, ml = Malayalam
 
     // Audio Monitoring State
@@ -534,6 +533,10 @@ export const Dashboard = () => {
             setCurrentSummary(result.summary);
             // Update session with summary
             session.summary = result.summary;
+            session.summariesByLanguage = {
+                ...(session.summariesByLanguage || {}),
+                [summaryLanguage]: result.summary
+            };
             saveSession(session);
 
             // Save to Supabase
@@ -551,19 +554,16 @@ export const Dashboard = () => {
         isSummarizingRef.current = false;
     }, [recordingStartTime, geminiApiKey, targetLanguage, summaryLanguage]);
 
-    const handleSaveApiKey = (key: string) => {
-        setGeminiApiKey(key);
-        setStoredApiKey(key);
-        setShowApiKeyInput(false);
-    };
-
     const handleSelectSession = (session: Session) => {
         setCurrentSessionId(session.id);
-        setCurrentSummary(session.summary);
+        const cached = session.summariesByLanguage?.en || session.summary;
+        setCurrentSummary(cached);
         setCurrentTranscript(session.transcript);
         setCurrentRecordedAt(session.startedAt);
         setCurrentDuration(session.duration);
         setSummaryLanguage('en'); // Reset language for historical sessions
+        setSummaryError(null);
+        setIsSummarizing(false);
         setShowSessionHistory(false);
         setShowSummaryPanel(true);
     };
@@ -576,10 +576,33 @@ export const Dashboard = () => {
         setIsSummarizing(true);
         setSummaryError(null);
 
+        // Cache-first: reuse previously generated summary for this session+language
+        if (currentSessionId) {
+            const stored = getSession(currentSessionId);
+            const cached = stored?.summariesByLanguage?.[language];
+            if (cached) {
+                setCurrentSummary(cached);
+                setIsSummarizing(false);
+                return;
+            }
+        }
+
         const result = await summarizeConversation(currentTranscript, geminiApiKey, language);
 
         if (result.success) {
             setCurrentSummary(result.summary);
+            // Persist cache to session storage so we don't call Gemini again next time.
+            if (currentSessionId) {
+                const stored = getSession(currentSessionId);
+                if (stored) {
+                    stored.summary = result.summary;
+                    stored.summariesByLanguage = {
+                        ...(stored.summariesByLanguage || {}),
+                        [language]: result.summary
+                    };
+                    saveSession(stored);
+                }
+            }
             if (currentSessionId) {
                 saveSummaryToSupabase(
                     currentSessionId,
@@ -594,6 +617,39 @@ export const Dashboard = () => {
 
         setIsSummarizing(false);
     }, [currentTranscript, geminiApiKey, isSummarizing]);
+
+    // Sync state to widget
+    useEffect(() => {
+        if (channelRef.current) {
+            sendMessage(channelRef.current, 'APP_STATE', {
+                isListening,
+                isRecording,
+                targetLanguage
+            });
+        }
+    }, [isListening, isRecording, targetLanguage]);
+
+    // Handle widget commands
+    useEffect(() => {
+        if (!channelRef.current) return;
+        const handleMessage = (event: MessageEvent) => {
+            if (event.data.type === 'WIDGET_COMMAND') {
+                const { command, value } = event.data.payload;
+                if (command === 'TOGGLE_LISTENING') {
+                    toggleListening();
+                } else if (command === 'TOGGLE_RECORDING') {
+                    if (isRecording) stopRecording();
+                    else startRecording();
+                } else if (command === 'SET_LANGUAGE') {
+                    handleLanguageChange(value);
+                }
+            }
+        };
+        channelRef.current.addEventListener('message', handleMessage);
+        return () => {
+            channelRef.current?.removeEventListener('message', handleMessage);
+        };
+    }, [toggleListening, isRecording, startRecording, stopRecording, handleLanguageChange]);
 
     const formatRecordingTime = (seconds: number) => {
         const mins = Math.floor(seconds / 60);
@@ -863,46 +919,6 @@ export const Dashboard = () => {
                                     </div>
                                 </div>
 
-                                {/* Gemini API Key */}
-                                <div className="pt-3 border-t border-gray-800">
-                                    <label className="text-xs text-gray-500 block mb-2 flex items-center gap-2">
-                                        <Key className="w-3 h-3" />
-                                        Gemini API Key
-                                    </label>
-                                    {showApiKeyInput ? (
-                                        <div className="flex gap-2">
-                                            <input
-                                                type="password"
-                                                defaultValue={geminiApiKey}
-                                                placeholder="Enter API key..."
-                                                className="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-xs text-white placeholder-gray-500 focus:outline-none focus:border-purple-500"
-                                                onKeyDown={(e) => {
-                                                    if (e.key === 'Enter') {
-                                                        handleSaveApiKey((e.target as HTMLInputElement).value);
-                                                    }
-                                                }}
-                                            />
-                                            <button
-                                                onClick={() => setShowApiKeyInput(false)}
-                                                className="p-2 bg-gray-800 rounded-lg hover:bg-gray-700"
-                                            >
-                                                <X className="w-4 h-4 text-gray-400" />
-                                            </button>
-                                        </div>
-                                    ) : (
-                                        <button
-                                            onClick={() => setShowApiKeyInput(true)}
-                                            className={`w-full py-2 rounded-lg text-xs font-bold uppercase transition-colors flex items-center justify-center gap-2 ${geminiApiKey
-                                                ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-                                                : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-                                                }`}
-                                        >
-                                            <Sparkles className="w-3 h-3" />
-                                            {geminiApiKey ? 'API Key Set' : 'Add API Key'}
-                                        </button>
-                                    )}
-                                </div>
-
                                 {/* Summary Language Selector */}
                                 <div className="pt-3 border-t border-gray-800">
                                     <label className="text-xs text-gray-500 block mb-2 flex items-center gap-2">
@@ -1104,6 +1120,7 @@ export const Dashboard = () => {
                     transcript={currentTranscript}
                     duration={currentDuration}
                     recordedAt={currentRecordedAt}
+                    geminiApiKey={geminiApiKey}
                     onClose={() => {
                         setShowSummaryPanel(false);
                         setSummaryLanguage('en'); // Reset language on close

@@ -7,47 +7,47 @@ import { pipeline, env } from '@xenova/transformers';
  */
 env.allowLocalModels = true;
 env.useBrowserCache = false;
-env.backends.onnx.wasm.wasmPaths = '/'; // WASM files are in root public/
 
-// For local model loading, we need to set the local path and enable local models
-// Don't use remoteHost as it causes path duplication issues
-env.localModelPath = '/models/';  // Base path for local models
-env.allowRemoteModels = false;    // Disable remote fetching entirely
+// Resolve the app root (origin / base) from the worker's location.
+// The worker lives at one of:
+//   DEV:  http://localhost:5173/src/workers/whisper.worker.js  → root = http://localhost:5173/
+//   PROD: file:///…/dist/assets/whisper.worker-XYZ.js          → root = file:///…/dist/
+const workerHref = self.location.href;
+let appRoot;
+try {
+    const srcIdx = workerHref.indexOf('/src/');
+    if (srcIdx !== -1) {
+        appRoot = workerHref.slice(0, srcIdx + 1); // e.g. http://localhost:5173/
+    } else {
+        // Production: worker lives in /dist/assets/ — go up two levels to /dist/
+        appRoot = new URL('../../', workerHref).href;
+    }
+} catch (_) {
+    appRoot = new URL('.', workerHref).href;
+}
+
+const WORKER_BASE_URL = new URL('.', workerHref);
+env.backends.onnx.wasm.wasmPaths = WORKER_BASE_URL.href;
+
+// Models live in `public/models/` which is served from the app root.
+env.localModelPath = appRoot + 'models/';
+env.allowRemoteModels = false; // Disable remote fetching entirely
+
+console.log('[Worker] Resolved localModelPath:', env.localModelPath);
 
 let transcriber = null;
+let isBusy = false; // Prevent queuing multiple transcriptions
 
 const init = async () => {
-    // Spy on fetch
-    const originalFetch = self.fetch;
-    self.fetch = async (input, init) => {
-        const url = typeof input === 'string' ? input : input.url;
-        console.log(`[Worker Fetch Spy] Requesting: ${url}`);
-        const response = await originalFetch(input, init);
-        if (!response.ok) {
-            console.error(`[Worker Fetch Spy] 404/Error for: ${url}`);
-        }
-        // Check for HTML (404 disguised as 200)
-        const clone = response.clone();
-        const text = await clone.text();
-        if (text.trim().startsWith('<')) {
-            console.error(`[Worker Fetch Spy] HTML detected for: ${url}`);
-            self.postMessage({ type: 'debug', message: `FAIL: ${url} returned HTML` });
-        }
-        return response;
-    };
-
     try {
         console.log('[Worker] Loading model...');
         self.postMessage({ type: 'debug', message: 'Loading Model...' });
 
-        // Use just the model name since localModelPath is set to /models/
-        const P_MODEL_PATH = 'whisper-base.en';
-
-        console.log(`[Worker] Attempting to load model from: ${P_MODEL_PATH}`);
-        self.postMessage({ type: 'debug', message: `Model path: ${P_MODEL_PATH}` });
+        // Use just the model name since localModelPath points at `.../models/`
+        const P_MODEL_PATH = 'whisper-medium.en';
 
         transcriber = await pipeline('automatic-speech-recognition', P_MODEL_PATH, {
-            local_files_only: true,  // Only use local files from localModelPath
+            local_files_only: true,
         });
 
         console.log('[Worker] Model loaded successfully');
@@ -66,38 +66,36 @@ self.onmessage = async (event) => {
     if (type === 'init') {
         await init();
     } else if (type === 'transcribe') {
-        // Reduced logging for performance
-        // self.postMessage({ type: 'debug', message: `Processing ${audio.length} samples...` });
-
         if (!transcriber) {
             self.postMessage({ type: 'error', error: "Transcriber not initialized!" });
             return;
         }
 
+        // Drop the request if we're already transcribing — prevents piling up
+        if (isBusy) {
+            return;
+        }
+        isBusy = true;
+
         try {
-            const start = performance.now();
-
-            // Calculate actual duration for optimal chunk_length_s
             const durationSeconds = audio.length / 16000;
-            const chunkLength = Math.max(0.5, Math.min(30, Math.ceil(durationSeconds))); // Match actual duration
+            // Match chunk_length_s to actual audio so Whisper doesn't pad unnecessarily
+            const chunkLength = Math.max(1, Math.min(30, Math.ceil(durationSeconds)));
 
-            // Accuracy-optimized settings for refinement (not real-time)
+            // Speed-optimised settings: greedy decode is ~3x faster than beam search
+            // and still very accurate for short utterances (< 10s)
             const output = await transcriber(audio, {
                 language: 'english',
                 task: 'transcribe',
-                chunk_length_s: 30,           // Longer chunks for better context
+                chunk_length_s: chunkLength,
                 return_timestamps: false,
-                // Accuracy-focused settings
-                temperature: 0.0,             // Deterministic output
-                beam_size: 5,                 // More beams = better accuracy
-                best_of: 3,                   // Multiple candidates
-                // Standard thresholds for quality
-                no_speech_threshold: 0.3,     // Lower threshold to catch quieter speech
-                logprob_threshold: -0.5,      // Stricter quality filtering
+                // Greedy decode — fastest, still accurate
+                temperature: 0.0,
+                num_beams: 1,
+                // Keep quality gates
+                no_speech_threshold: 0.3,
+                logprob_threshold: -0.5,
             });
-
-            const end = performance.now();
-            const duration = (end - start).toFixed(0);
 
             // Handle different output formats
             let text = '';
@@ -110,17 +108,12 @@ self.onmessage = async (event) => {
             }
 
             const trimmed = text.trim();
-
-            if (trimmed.length > 0) {
-                // Reduced logging for performance - only send result
-                self.postMessage({ type: 'result', text: trimmed });
-            } else {
-                // Don't log empty results - just send empty
-                self.postMessage({ type: 'result', text: '' });
-            }
+            self.postMessage({ type: 'result', text: trimmed });
         } catch (error) {
             console.error('[Worker] Inference error', error);
             self.postMessage({ type: 'error', error: "Inference failed: " + error.message });
+        } finally {
+            isBusy = false;
         }
     }
 };

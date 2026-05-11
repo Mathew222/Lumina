@@ -45,6 +45,11 @@ export function useHybridSpeechRecognition(options?: UseHybridOptions): UseHybri
         whisper: 'loading' | 'ready' | 'error';
     }>({ vosk: 'loading', whisper: 'loading' });
 
+    // Ref mirror of engineStatus.whisper so audio-processor closures always read
+    // the live value without stale-closure bugs
+    const whisperReadyRef = useRef(false);
+    const voskReadyRef = useRef(false);
+
     // Worker references
     const voskWorkerRef = useRef<Worker | null>(null);
     const whisperWorkerRef = useRef<Worker | null>(null);
@@ -54,6 +59,7 @@ export function useHybridSpeechRecognition(options?: UseHybridOptions): UseHybri
     const processorRef = useRef<ScriptProcessorNode | null>(null);
     const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
     const monitorGainRef = useRef<GainNode | null>(null);
+    const streamRef = useRef<MediaStream | null>(null);
 
     // Update gain value when monitorVolume changes
     useEffect(() => {
@@ -74,6 +80,10 @@ export function useHybridSpeechRecognition(options?: UseHybridOptions): UseHybri
     const [retryCount, setRetryCount] = useState(0);
     const isModelLoadingRef = useRef(isModelLoading);
     const isMutedRef = useRef(options?.isMuted || false);
+    // Rolling Whisper timer: fires every N seconds of continuous speech
+    // so we get results even without a silence gap
+    const whisperRollingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const WHISPER_ROLLING_INTERVAL_MS = 3000; // send to Whisper at least every 3s
 
     useEffect(() => {
         isModelLoadingRef.current = isModelLoading;
@@ -116,6 +126,7 @@ export function useHybridSpeechRecognition(options?: UseHybridOptions): UseHybri
             if (type === 'ready') {
                 console.log('[Hybrid] Vosk worker ready');
                 setEngineStatus(prev => ({ ...prev, vosk: 'ready' }));
+                voskReadyRef.current = true;
             } else if (type === 'debug') {
                 console.log(`[Vosk Debug] ${message}`);
             } else if (type === 'partial') {
@@ -158,12 +169,17 @@ export function useHybridSpeechRecognition(options?: UseHybridOptions): UseHybri
             new URL('../workers/whisper.worker.js', import.meta.url),
             { type: 'module' }
         );
+        whisperWorkerRef.current.onerror = (e) => {
+            console.error('[Hybrid] Whisper Worker crashed:', e);
+            setEngineStatus(prev => ({ ...prev, whisper: 'error' }));
+        };
         whisperWorkerRef.current.onmessage = (event) => {
             const { type, text: resultText, error: resultError, message } = event.data;
 
             if (type === 'ready') {
                 console.log('[Hybrid] Whisper worker ready');
                 setEngineStatus(prev => ({ ...prev, whisper: 'ready' }));
+                whisperReadyRef.current = true;
             } else if (type === 'debug') {
                 console.log(`[Whisper Debug] ${message}`);
             } else if (type === 'result') {
@@ -218,14 +234,20 @@ export function useHybridSpeechRecognition(options?: UseHybridOptions): UseHybri
         processorRef.current?.disconnect();
         monitorGainRef.current?.disconnect();
         audioContextRef.current?.close();
+        streamRef.current?.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
         setIsListening(false);
         setAudioLevel(0);
 
-        // Clear Whisper buffer
+        // Clear all buffers and timers
         whisperBufferRef.current = [];
         whisperBufferLengthRef.current = 0;
         if (silenceTimeoutRef.current) {
             clearTimeout(silenceTimeoutRef.current);
+        }
+        if (whisperRollingTimerRef.current) {
+            clearTimeout(whisperRollingTimerRef.current);
+            whisperRollingTimerRef.current = null;
         }
     }, []);
 
@@ -238,14 +260,15 @@ export function useHybridSpeechRecognition(options?: UseHybridOptions): UseHybri
         setRetryCount(c => c + 1);
     }, [stopListening]);
 
+    // Use a stable callback that reads whisperReadyRef (live value) to avoid
+    // the stale-closure bug where engineStatus.whisper was always 'loading'.
     const sendToWhisper = useCallback(() => {
-        if (!whisperWorkerRef.current || whisperBufferLengthRef.current < 16000) {
-            // Need at least 1 second of audio
-            return;
-        }
+        if (!whisperWorkerRef.current) return;
+        // Need at least 0.8s of audio
+        if (whisperBufferLengthRef.current < 16000 * 0.8) return;
 
-        // Only send if Whisper is ready
-        if (engineStatus.whisper !== 'ready') {
+        // Read live ready-state via ref — avoids stale closure
+        if (!whisperReadyRef.current) {
             console.log('[Hybrid] Whisper not ready, skipping refinement');
             return;
         }
@@ -258,51 +281,60 @@ export function useHybridSpeechRecognition(options?: UseHybridOptions): UseHybri
             offset += chunk.length;
         }
 
-        console.log(`[Hybrid] Sending ${(whisperBufferLengthRef.current / 16000).toFixed(2)}s to Whisper for refinement`);
-        whisperWorkerRef.current.postMessage({ type: 'transcribe', audio: fullBuffer });
+        whisperWorkerRef.current.postMessage({ type: 'transcribe', audio: fullBuffer }, [fullBuffer.buffer]);
 
         // Clear buffer after sending
         whisperBufferRef.current = [];
         whisperBufferLengthRef.current = 0;
-    }, [engineStatus.whisper]);
+    }, []);
 
     const startListening = useCallback(async () => {
         setError(null);
         try {
             console.log('[Hybrid] Starting audio capture...');
+            let stream: MediaStream;
+            const electronApi = (window as any).electron;
+            const canUseDesktopCapture = !!electronApi?.getAudioSources;
 
-            if (!(window as any).electron || !(window as any).electron.getAudioSources) {
-                throw new Error('Electron API not initialized. Please restart the app.');
-            }
-
-            const sources = await (window as any).electron.getAudioSources();
-            if (!sources || sources.length === 0) {
-                throw new Error('No audio sources available');
-            }
-
-            // Select screen source for system audio
-            let screenSource = sources.find((s: any) =>
-                s.id.startsWith('screen:') && s.name.toLowerCase().includes('entire screen')
-            ) || sources.find((s: any) => s.id.startsWith('screen:')) || sources[0];
-
-            console.log('[Hybrid] Selected source:', screenSource.name);
-
-            const constraints: any = {
-                audio: {
-                    mandatory: {
-                        chromeMediaSource: 'desktop',
-                        chromeMediaSourceId: screenSource.id
+            if (canUseDesktopCapture) {
+                try {
+                    const sources = await electronApi.getAudioSources();
+                    if (!sources || sources.length === 0) {
+                        throw new Error('No audio sources available');
                     }
-                } as any,
-                video: {
-                    mandatory: {
-                        chromeMediaSource: 'desktop',
-                        chromeMediaSourceId: screenSource.id
-                    } as any
-                }
-            };
 
-            const stream = await navigator.mediaDevices.getUserMedia(constraints as any);
+                    // Select screen source for system audio
+                    const screenSource = sources.find((s: any) =>
+                        s.id.startsWith('screen:') && s.name.toLowerCase().includes('entire screen')
+                    ) || sources.find((s: any) => s.id.startsWith('screen:')) || sources[0];
+
+                    console.log('[Hybrid] Selected source:', screenSource.name);
+
+                    const constraints: any = {
+                        audio: {
+                            mandatory: {
+                                chromeMediaSource: 'desktop',
+                                chromeMediaSourceId: screenSource.id
+                            }
+                        } as any,
+                        video: {
+                            mandatory: {
+                                chromeMediaSource: 'desktop',
+                                chromeMediaSourceId: screenSource.id
+                            } as any
+                        }
+                    };
+
+                    stream = await navigator.mediaDevices.getUserMedia(constraints as any);
+                } catch (desktopError) {
+                    console.warn('[Hybrid] Desktop audio capture failed, falling back to microphone:', desktopError);
+                    stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                }
+            } else {
+                console.warn('[Hybrid] Electron API unavailable. Using microphone capture fallback.');
+                stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            }
+            streamRef.current = stream;
 
             // Stop video track
             const videoTrack = stream.getVideoTracks()[0];
@@ -341,12 +373,23 @@ export function useHybridSpeechRecognition(options?: UseHybridOptions): UseHybri
 
             let voskBuffer: Float32Array[] = [];
             let voskBufferLength = 0;
-            const VOSK_CHUNK_SIZE = 16000 * 0.05;  // 50ms chunks for minimum latency
-            const VOSK_MIN_INTERVAL = 30;         // 30ms min between sends (aggressive)
+            const VOSK_CHUNK_SIZE = 16000 * 0.03;  // 30ms chunks for lower latency
+            const VOSK_MIN_INTERVAL = 20;            // 20ms min between sends
             let lastVoskSendTime = 0;
 
-            const WHISPER_SILENCE_THRESHOLD = 500; // Send to Whisper after 0.5s of silence
+            const WHISPER_SILENCE_THRESHOLD = 200;  // Send to Whisper after 200ms of silence
             const SPEECH_THRESHOLD = 0.001;
+
+            // Rolling Whisper timer — fires even during continuous speech
+            const scheduleRollingWhisper = () => {
+                if (whisperRollingTimerRef.current) clearTimeout(whisperRollingTimerRef.current);
+                whisperRollingTimerRef.current = setTimeout(() => {
+                    whisperRollingTimerRef.current = null;
+                    sendToWhisper();
+                    scheduleRollingWhisper();
+                }, WHISPER_ROLLING_INTERVAL_MS);
+            };
+            scheduleRollingWhisper();
 
             processor.onaudioprocess = (e) => {
                 if (isModelLoadingRef.current) return;
@@ -436,17 +479,19 @@ export function useHybridSpeechRecognition(options?: UseHybridOptions): UseHybri
                     }
                 }
 
-                // Send to Whisper after silence (for refinement)
+                // Send to Whisper immediately on short silence
                 if (!hasSpeech &&
-                    whisperBufferLengthRef.current > 16000 * 1.5 && // At least 1.5 seconds for accuracy
+                    whisperBufferLengthRef.current > 16000 * 0.8 &&
                     (now - lastSpeechTimeRef.current) > WHISPER_SILENCE_THRESHOLD &&
                     !silenceTimeoutRef.current) {
 
-                    // Schedule Whisper refinement — slightly delayed for audio context stability
                     silenceTimeoutRef.current = setTimeout(() => {
                         sendToWhisper();
                         silenceTimeoutRef.current = null;
-                    }, 150);
+                        // Reset rolling timer since silence already flushed the buffer
+                        if (whisperRollingTimerRef.current) clearTimeout(whisperRollingTimerRef.current);
+                        scheduleRollingWhisper();
+                    }, 50);
                 }
 
                 // Limit Whisper buffer size (max 30 seconds)

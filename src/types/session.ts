@@ -15,6 +15,11 @@ export interface Session {
     endedAt: string;
     transcript: string;
     summary: Summary | null;
+    /**
+     * Cache summaries per output language (e.g. "en", "ml") so we don't re-request.
+     * Backward-compatible: older sessions may not have this field.
+     */
+    summariesByLanguage?: Record<string, Summary>;
     language: string;
     duration: number; // in seconds
 }
