@@ -21296,6 +21296,42 @@ import_electron.app.whenReady().then(() => {
       };
     }
   });
+  import_electron.ipcMain.handle("fetch-nvidia-api-stream", async (event, { url, options, requestId }) => {
+    try {
+      const body = JSON.parse(options.body || "{}");
+      body.stream = true;
+      const streamOptions = { ...options, body: JSON.stringify(body) };
+      const response = await fetch(url, streamOptions);
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        return { ok: false, status: response.status, data: errData };
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const data = line.slice(6).trim();
+          if (data === "[DONE]") continue;
+          try {
+            const parsed = JSON.parse(data);
+            const content = parsed.choices?.[0]?.delta?.content || "";
+            if (content) event.sender.send(`nvidia-chunk-${requestId}`, content);
+          } catch {
+          }
+        }
+      }
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, status: 500, error: error.message };
+    }
+  });
   import_electron.ipcMain.handle("synthesize-edge-tts", async (_event, { text, voice }) => {
     try {
       const tts = await getOrCreateTTS(voice);
