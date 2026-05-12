@@ -1,8 +1,8 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { X, Copy, Check, Sparkles, ListChecks, Tag, ClipboardList, FileText, ChevronDown, ChevronUp, Clock, Calendar, Languages, MessageCircle, Send, Quote, Volume2, Square } from 'lucide-react';
 import type { Summary } from '../types/session';
 import { askTranscriptRag, type RagAnswer } from '../utils/gemini';
-import { speakText, stopAudio, speakLongText, stopLongText } from '../utils/tts';
+import { speakText, stopAudio, speakLongText, stopLongText, warmVoice } from '../utils/tts';
 
 interface SummaryViewProps {
     summary: Summary | null;
@@ -45,18 +45,26 @@ export const SummaryView = ({
     const lastRagRequestAtRef = useRef(0);
     const ragCacheRef = useRef(new Map<string, RagAnswer>());
     const [playingTTS, setPlayingTTS] = useState(false);
+    const [activeChunk, setActiveChunk] = useState<string | null>(null);
+
+    // Pre-warm TTS connection as soon as panel opens so first word plays instantly
+    useEffect(() => {
+        warmVoice(currentLanguage);
+    }, [currentLanguage]);
 
     const handlePlayTTS = () => {
         if (playingTTS) {
-            stopLongText(); // stops streaming playback
-            stopAudio();    // stops any single-chunk audio
+            stopLongText();
+            stopAudio();
             setPlayingTTS(false);
+            setActiveChunk(null);
             return;
         }
 
         stopLongText();
         stopAudio();
         setPlayingTTS(true);
+        setActiveChunk(null);
 
         const textToRead = formattedTranscript || transcript;
         const langToUse = formattedTranscript ? currentLanguage : 'en';
@@ -66,17 +74,15 @@ export const SummaryView = ({
             return;
         }
 
-        // Use streaming sentence-by-sentence TTS so audio starts almost instantly
         speakLongText(
             textToRead,
             langToUse,
             1.0,
-            () => {}, // onStart
-            () => setPlayingTTS(false), // onEnd
-            (err) => {
-                console.error('TTS Error:', err);
-                setPlayingTTS(false);
-            }
+            () => {},
+            () => { setPlayingTTS(false); setActiveChunk(null); },
+            (err) => { console.error('TTS Error:', err); setPlayingTTS(false); setActiveChunk(null); },
+            (chunkText) => setActiveChunk(chunkText),
+            () => setActiveChunk(null)
         );
     };
 
@@ -206,6 +212,7 @@ ${formattedTranscript ? `\n📄 Formatted Transcript:\n${formattedTranscript}` :
                         {(formattedTranscript || transcript) && (
                             <button
                                 onClick={handlePlayTTS}
+                                onMouseEnter={() => !playingTTS && warmVoice(currentLanguage)}
                                 className={`px-4 py-2 rounded-lg transition-colors flex items-center gap-2 text-sm ${playingTTS ? 'bg-purple-500/30 text-purple-300 animate-pulse border border-purple-500/30' : 'bg-gray-800 hover:bg-gray-700 text-gray-300'}`}
                             >
                                 {playingTTS ? (
@@ -242,7 +249,9 @@ ${formattedTranscript ? `\n📄 Formatted Transcript:\n${formattedTranscript}` :
                         )}
                         <button
                             onClick={() => {
+                                stopLongText();
                                 stopAudio();
+                                setActiveChunk(null);
                                 onClose();
                             }}
                             className="p-2 rounded-lg hover:bg-gray-800 transition-colors"
@@ -292,7 +301,9 @@ ${formattedTranscript ? `\n📄 Formatted Transcript:\n${formattedTranscript}` :
                             <p className="text-red-300">{error}</p>
                             <button
                                 onClick={() => {
+                                    stopLongText();
                                     stopAudio();
+                                    setActiveChunk(null);
                                     onClose();
                                 }}
                                 className="mt-4 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg transition-colors"
@@ -397,19 +408,43 @@ ${formattedTranscript ? `\n📄 Formatted Transcript:\n${formattedTranscript}` :
                                                     <p className="text-sm text-gray-400">Translating transcript...</p>
                                                 </div>
                                             ) : formattedTranscript ? (
-                                                <div className="space-y-4">
-                                                    {formattedTranscript.split('\n\n').map((paragraph, i) => (
-                                                        <p key={i} className="text-sm text-gray-300 leading-relaxed bg-gray-900/50 rounded-xl p-4">
-                                                            {paragraph}
-                                                        </p>
-                                                    ))}
-                                                    <p className="text-xs text-gray-500 italic mt-2">✨ Transcript automatically formatted & translated</p>
+                                                <div className="text-sm leading-loose bg-gray-900/50 rounded-xl p-4 max-h-72 overflow-y-auto">
+                                                    {formattedTranscript.split(/(?<=[.!?।])\s+/).filter(Boolean).map((sentence, i) => {
+                                                        const isActive = activeChunk !== null && sentence.trim().slice(0, 40) === activeChunk.trim().slice(0, 40);
+                                                        return (
+                                                            <span
+                                                                key={i}
+                                                                className={`inline transition-all duration-200 rounded px-0.5 ${
+                                                                    isActive
+                                                                        ? 'bg-purple-500/40 text-white shadow-[0_0_10px_rgba(168,85,247,0.5)] font-medium'
+                                                                        : 'text-gray-300'
+                                                                }`}
+                                                            >
+                                                                {sentence}{' '}
+                                                            </span>
+                                                        );
+                                                    })}
                                                 </div>
-                                            ) : (
-                                                <p className="text-sm text-gray-400 leading-relaxed whitespace-pre-wrap bg-gray-900/50 rounded-xl p-4 max-h-64 overflow-y-auto">
-                                                    {transcript}
-                                                </p>
-                                            )}
+                                            ) : transcript ? (
+                                                <div className="text-sm leading-loose bg-gray-900/50 rounded-xl p-4 max-h-72 overflow-y-auto">
+                                                    {transcript.split(/(?<=[.!?])\s+/).filter(Boolean).map((sentence, i) => {
+                                                        const isActive = activeChunk !== null && sentence.trim().slice(0, 40) === activeChunk.trim().slice(0, 40);
+                                                        return (
+                                                            <span
+                                                                key={i}
+                                                                className={`inline transition-all duration-200 rounded px-0.5 ${
+                                                                    isActive
+                                                                        ? 'bg-purple-500/40 text-white shadow-[0_0_10px_rgba(168,85,247,0.5)] font-medium'
+                                                                        : 'text-gray-300'
+                                                                }`}
+                                                            >
+                                                                {sentence}{' '}
+                                                            </span>
+                                                        );
+                                                    })}
+                                                </div>
+                                            ) : null}
+
                                         </div>
                                     )}
                                 </div>
@@ -499,7 +534,9 @@ ${formattedTranscript ? `\n📄 Formatted Transcript:\n${formattedTranscript}` :
                 <div className="p-4 border-t border-gray-800/50">
                     <button
                         onClick={() => {
+                            stopLongText();
                             stopAudio();
+                            setActiveChunk(null);
                             onClose();
                         }}
                         className="w-full py-3 bg-gray-800 hover:bg-gray-700 text-gray-300 font-medium rounded-xl transition-colors"

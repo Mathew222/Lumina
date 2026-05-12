@@ -297,7 +297,9 @@ export async function speakLongText(
     rate: number = 0.9,
     onStart?: () => void,
     onEnd?: () => void,
-    onError?: (e: Error) => void
+    onError?: (e: Error) => void,
+    onChunkStart?: (chunkText: string, chunkIndex: number, totalChunks: number) => void,
+    onChunkEnd?: () => void
 ): Promise<void> {
     if (!text.trim()) return;
 
@@ -305,8 +307,8 @@ export async function speakLongText(
 
     // Split into sentences (. ! ? ।) keeping delimiter
     const rawSentences = text.match(/[^.!?।]+[.!?।]+|[^.!?।]+$/g) || [text];
-    // Group short sentences together (<=80 chars) to reduce IPC calls
-    const CHUNK_MIN = 80;
+    // Group short sentences (<=40 chars) to reduce IPC round-trips while keeping chunks small
+    const CHUNK_MIN = 40;
     const sentences: string[] = [];
     let buf = '';
     for (const s of rawSentences) {
@@ -331,18 +333,20 @@ export async function speakLongText(
         } catch { return null; }
     };
 
-    // Fetch first two immediately (so playback starts fast AND next is pre-loaded)
+    // Prefetch first 3 immediately — connection is (hopefully) already warm,
+    // so chunks 0, 1, 2 all come back in parallel before playback even starts
     const buffers: (AudioBuffer | null)[] = new Array(sentences.length).fill(null);
     const fetchQueue: Promise<void>[] = [];
 
     const prefetch = (i: number) => {
-        if (i >= sentences.length) return;
+        if (i >= sentences.length || fetchQueue[i]) return;
         const p = fetchSentence(sentences[i]).then(buf => { buffers[i] = buf; });
-        fetchQueue.push(p);
+        fetchQueue[i] = p;
     };
 
     prefetch(0);
     prefetch(1);
+    prefetch(2);
 
     // Play each sentence in order
     let started = false;
@@ -368,16 +372,22 @@ export async function speakLongText(
         // Pre-fetch the one 2 ahead while current plays
         prefetch(i + 2);
 
+        // Notify caller which chunk is starting (for highlight)
+        if (onChunkStart) onChunkStart(sentences[i], i, sentences.length);
+
         await new Promise<void>((resolve) => {
             playAudioBuffer(
                 buf, rate,
                 !started ? () => { started = true; if (onStart) onStart(); } : undefined,
-                resolve,
+                () => { if (onChunkEnd) onChunkEnd(); resolve(); },
                 () => resolve()
             );
         });
     }
 
-    if (!longTextStopFlag && onEnd) onEnd();
+    if (!longTextStopFlag) {
+        if (onChunkEnd) onChunkEnd(); // clear highlight
+        if (onEnd) onEnd();
+    }
 }
 

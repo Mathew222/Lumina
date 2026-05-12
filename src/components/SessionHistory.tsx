@@ -163,14 +163,16 @@ export const SessionHistory = ({ isOpen, onClose, onSelectSession }: SessionHist
                                             </button>
                                             <button
                                                 onClick={(e) => handleDelete(session.id, e)}
-                                                className={`p - 2 rounded - lg transition - colors ${confirmDelete === session.id
+                                                className={`p-2 rounded-lg transition-colors ${
+                                                    confirmDelete === session.id
                                                         ? 'bg-red-500/20 hover:bg-red-500/30'
                                                         : 'hover:bg-gray-700'
-                                                    } `}
+                                                }`}
                                                 title={confirmDelete === session.id ? 'Click again to confirm' : 'Delete session'}
                                             >
-                                                <Trash2 className={`w - 4 h - 4 ${confirmDelete === session.id ? 'text-red-400' : 'text-gray-400'
-                                                    } `} />
+                                                <Trash2 className={`w-4 h-4 ${
+                                                    confirmDelete === session.id ? 'text-red-400' : 'text-gray-400'
+                                                }`} />
                                             </button>
                                             <ChevronRight className="w-4 h-4 text-gray-600" />
                                         </div>
