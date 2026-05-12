@@ -15,7 +15,7 @@ import { saveSummaryToSupabase } from '../utils/supabase';
 
 export const Dashboard = () => {
     const tts = useMalayalamTTS();
-    const { text, interimText, isListening, startListening, stopListening, error, audioLevel, setMonitorVolume, isModelLoading, reloadModel, engineStatus } = useHybridSpeechRecognition({
+    const { text, interimText, lastWhisperText, isListening, startListening, stopListening, error, audioLevel, setMonitorVolume, isModelLoading, reloadModel, engineStatus } = useHybridSpeechRecognition({
         isMuted: tts.isSpeaking
     });
     const channelRef = useRef<BroadcastChannel | null>(null);
@@ -220,23 +220,14 @@ export const Dashboard = () => {
         };
     }, [isRecording, recordingStartTime]);
 
-    // Capture transcript while recording
+    // Capture transcript while recording — Whisper segments only
+    // lastWhisperText fires exactly once per Whisper inference with a clean,
+    // finalised segment. Appending each segment gives a pure Whisper transcript.
     useEffect(() => {
-        if (isRecording && text) {
-            const lastEntry = transcriptBufferRef.current[transcriptBufferRef.current.length - 1] || '';
-            // text may be a rolling/cumulative transcript — only store the new delta
-            if (text !== lastEntry) {
-                if (lastEntry && text.startsWith(lastEntry)) {
-                    // Rolling transcript: store only the newly added words
-                    const newPart = text.slice(lastEntry.length).trim();
-                    if (newPart) transcriptBufferRef.current.push(newPart);
-                } else {
-                    // New distinct segment
-                    transcriptBufferRef.current.push(text);
-                }
-            }
+        if (isRecording && lastWhisperText) {
+            transcriptBufferRef.current.push(lastWhisperText);
         }
-    }, [text, isRecording]);
+    }, [lastWhisperText, isRecording]);
 
     useEffect(() => {
         // Hook into console.log to capture logs on screen

@@ -54,65 +54,38 @@ export const SummaryView = ({
         warmVoice(currentLanguage);
     }, [currentLanguage]);
 
-    const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
-    const [activeWordIndex, setActiveWordIndex] = useState<number>(-1);
-    const wordsRef = useRef<string[]>([]);
-
-    const stopBrowserTTS = () => {
-        if ('speechSynthesis' in window) window.speechSynthesis.cancel();
-        utteranceRef.current = null;
-        setPlayingTTS(false);
-        setActiveChunk(null);
-        setActiveWordIndex(-1);
-    };
-
     const handlePlayTTS = () => {
         if (playingTTS) {
-            stopBrowserTTS();
             stopLongText();
             stopAudio();
+            setPlayingTTS(false);
+            setActiveChunk(null);
             return;
         }
 
+        stopLongText();
+        stopAudio();
+        setPlayingTTS(true);
+        setActiveChunk(null);
+
         const textToRead = formattedTranscript || transcript;
-        const langToUse = (formattedTranscript ? currentLanguage : 'en') === 'ml' ? 'ml-IN' : 'en-US';
+        const langToUse = formattedTranscript ? currentLanguage : 'en';
 
-        if (!textToRead) return;
-
-        // Browser speechSynthesis — zero network latency, starts < 100ms
-        if ('speechSynthesis' in window) {
-            window.speechSynthesis.cancel();
-            const words = textToRead.split(/\s+/);
-            wordsRef.current = words;
-
-            const utterance = new SpeechSynthesisUtterance(textToRead);
-            utterance.lang = langToUse;
-            utterance.rate = 1.0;
-
-            // Pick best available voice
-            const voices = window.speechSynthesis.getVoices();
-            const preferred = voices.find(v => v.lang.startsWith(langToUse.slice(0, 2)) && v.localService)
-                || voices.find(v => v.lang.startsWith(langToUse.slice(0, 2)));
-            if (preferred) utterance.voice = preferred;
-
-            // Word-level highlight via boundary events
-            utterance.onboundary = (e) => {
-                if (e.name === 'word') {
-                    const spokenSoFar = textToRead.slice(0, e.charIndex + e.charLength);
-                    const wordIdx = spokenSoFar.split(/\s+/).length - 1;
-                    setActiveWordIndex(wordIdx);
-                    setActiveChunk(words[wordIdx] || null);
-                }
-            };
-            utterance.onstart = () => setPlayingTTS(true);
-            utterance.onend = () => { setPlayingTTS(false); setActiveChunk(null); setActiveWordIndex(-1); };
-            utterance.onerror = () => { setPlayingTTS(false); setActiveChunk(null); setActiveWordIndex(-1); };
-
-            utteranceRef.current = utterance;
-            setPlayingTTS(true);
-            setActiveWordIndex(-1);
-            window.speechSynthesis.speak(utterance);
+        if (!textToRead) {
+            setPlayingTTS(false);
+            return;
         }
+
+        speakLongText(
+            textToRead,
+            langToUse,
+            1.0,
+            () => {},
+            () => { setPlayingTTS(false); setActiveChunk(null); },
+            (err) => { console.error('TTS Error:', err); setPlayingTTS(false); setActiveChunk(null); },
+            (chunkText) => setActiveChunk(chunkText),
+            () => setActiveChunk(null)
+        );
     };
 
     const formatDuration = (seconds?: number) => {
@@ -278,7 +251,6 @@ ${formattedTranscript ? `\n📄 Formatted Transcript:\n${formattedTranscript}` :
                         )}
                         <button
                             onClick={() => {
-                                stopBrowserTTS();
                                 stopLongText();
                                 stopAudio();
                                 setActiveChunk(null);
@@ -448,24 +420,38 @@ ${formattedTranscript ? `\n📄 Formatted Transcript:\n${formattedTranscript}` :
                                                 </div>
                                             ) : formattedTranscript ? (
                                                 <div className="text-sm leading-loose bg-gray-900/50 rounded-xl p-4 max-h-72 overflow-y-auto">
-                                                    {formattedTranscript.split(/(\s+)/).map((token, i) => {
-                                                        const wordIdx = formattedTranscript.split(/\s+/).slice(0, Math.ceil(i / 2)).length - (i % 2 === 0 ? 0 : 0);
-                                                        const isWord = !/^\s+$/.test(token);
-                                                        const globalWordIdx = formattedTranscript.split(/\s+/).indexOf(token, 0);
-                                                        const isActive = isWord && playingTTS && activeChunk === token.replace(/[^a-zA-Zа-яА-ЯMalayalam\u0D00-\u0D7F]/g, '').slice(0, 20) === (activeChunk || '').slice(0, 20);
-                                                        return isWord ? (
-                                                            <span key={i} className={`transition-all duration-75 rounded px-0.5 ${isActive ? 'bg-purple-500/50 text-white font-semibold shadow-[0_0_8px_rgba(168,85,247,0.7)]' : 'text-gray-300'}`}>{token}</span>
-                                                        ) : <span key={i}>{token}</span>;
+                                                    {formattedTranscript.split(/(?<=[.!?।])\s+/).filter(Boolean).map((sentence, i) => {
+                                                        const isActive = activeChunk !== null && sentence.trim().slice(0, 40) === activeChunk.trim().slice(0, 40);
+                                                        return (
+                                                            <span
+                                                                key={i}
+                                                                className={`inline transition-all duration-200 rounded px-0.5 ${
+                                                                    isActive
+                                                                        ? 'bg-purple-500/40 text-white shadow-[0_0_10px_rgba(168,85,247,0.5)] font-medium'
+                                                                        : 'text-gray-300'
+                                                                }`}
+                                                            >
+                                                                {sentence}{' '}
+                                                            </span>
+                                                        );
                                                     })}
                                                 </div>
                                             ) : transcript ? (
                                                 <div className="text-sm leading-loose bg-gray-900/50 rounded-xl p-4 max-h-72 overflow-y-auto">
-                                                    {transcript.split(/(\s+)/).map((token, i) => {
-                                                        const isWord = !/^\s+$/.test(token);
-                                                        const isActive = isWord && playingTTS && token === activeChunk;
-                                                        return isWord ? (
-                                                            <span key={i} className={`transition-all duration-75 rounded px-0.5 ${isActive ? 'bg-purple-500/50 text-white font-semibold shadow-[0_0_8px_rgba(168,85,247,0.7)]' : 'text-gray-300'}`}>{token}</span>
-                                                        ) : <span key={i}>{token}</span>;
+                                                    {transcript.split(/(?<=[.!?])\s+/).filter(Boolean).map((sentence, i) => {
+                                                        const isActive = activeChunk !== null && sentence.trim().slice(0, 40) === activeChunk.trim().slice(0, 40);
+                                                        return (
+                                                            <span
+                                                                key={i}
+                                                                className={`inline transition-all duration-200 rounded px-0.5 ${
+                                                                    isActive
+                                                                        ? 'bg-purple-500/40 text-white shadow-[0_0_10px_rgba(168,85,247,0.5)] font-medium'
+                                                                        : 'text-gray-300'
+                                                                }`}
+                                                            >
+                                                                {sentence}{' '}
+                                                            </span>
+                                                        );
                                                     })}
                                                 </div>
                                             ) : null}

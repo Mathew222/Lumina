@@ -138,22 +138,15 @@ export function useHybridSpeechRecognition(options?: UseHybridOptions): UseHybri
                     }
                 }
             } else if (type === 'result') {
-                // Vosk final result for current chunk
+                // Vosk final result — only used for live interim display, NOT for transcript
+                // Whisper is the authoritative transcript source
                 if (resultText) {
                     const clean = resultText.trim();
                     if (clean.length > 0) {
                         lastVoskResultRef.current = clean;
-                        // Show Vosk result immediately (will be refined by Whisper)
-                        setText(prev => {
-                            if (!prev) return clean;
-                            // Append if new content
-                            if (clean.length > prev.length * 1.3) return clean;
-                            const prevLower = prev.toLowerCase();
-                            const cleanLower = clean.toLowerCase();
-                            if (cleanLower.includes(prevLower.slice(-20))) return clean;
-                            return prev + ' ' + clean;
-                        });
-                        setInterimText('');
+                        // Show as interim so the user sees real-time feedback
+                        // but do NOT update `text` — Whisper owns the transcript
+                        setInterimText(clean);
                     }
                 }
             } else if (type === 'error') {
