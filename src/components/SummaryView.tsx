@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { X, Copy, Check, Sparkles, ListChecks, Tag, ClipboardList, FileText, ChevronDown, ChevronUp, Clock, Calendar, Languages, MessageCircle, Send, Quote, Volume2, Square } from 'lucide-react';
 import type { Summary } from '../types/session';
 import { askTranscriptRag, type RagAnswer } from '../utils/gemini';
-import { speakText, stopAudio } from '../utils/tts';
+import { speakText, stopAudio, speakLongText, stopLongText } from '../utils/tts';
 
 interface SummaryViewProps {
     summary: Summary | null;
@@ -10,6 +10,7 @@ interface SummaryViewProps {
     error?: string | null;
     transcript?: string;
     formattedTranscript?: string;
+    isFormattingTranscript?: boolean;
     duration?: number;
     recordedAt?: string;
     onClose: () => void;
@@ -25,6 +26,7 @@ export const SummaryView = ({
     error,
     transcript,
     formattedTranscript,
+    isFormattingTranscript = false,
     duration,
     recordedAt,
     onClose,
@@ -46,12 +48,13 @@ export const SummaryView = ({
 
     const handlePlayTTS = () => {
         if (playingTTS) {
-            stopAudio();
+            stopLongText(); // stops streaming playback
+            stopAudio();    // stops any single-chunk audio
             setPlayingTTS(false);
             return;
         }
 
-        // Stop any currently playing audio before starting new
+        stopLongText();
         stopAudio();
         setPlayingTTS(true);
 
@@ -63,13 +66,14 @@ export const SummaryView = ({
             return;
         }
 
-        speakText(
+        // Use streaming sentence-by-sentence TTS so audio starts almost instantly
+        speakLongText(
             textToRead,
             langToUse,
-            1.0, // normal rate
+            1.0,
             () => {}, // onStart
             () => setPlayingTTS(false), // onEnd
-            (err) => { // onError
+            (err) => {
                 console.error('TTS Error:', err);
                 setPlayingTTS(false);
             }
@@ -279,7 +283,7 @@ ${formattedTranscript ? `\n📄 Formatted Transcript:\n${formattedTranscript}` :
                             </div>
                             <p className="text-center text-sm text-gray-500 flex items-center justify-center gap-2">
                                 <span className="w-2 h-2 bg-purple-500 rounded-full animate-pulse"></span>
-                                Generating summary with AI...
+                                Processing conversation summary...
                             </p>
                         </div>
                     ) : error ? (
@@ -387,14 +391,19 @@ ${formattedTranscript ? `\n📄 Formatted Transcript:\n${formattedTranscript}` :
                                     </button>
                                     {showTranscript && (
                                         <div className="px-5 pb-5">
-                                            {formattedTranscript ? (
+                                            {isFormattingTranscript ? (
+                                                <div className="flex flex-col items-center justify-center p-8 bg-gray-900/50 rounded-xl border border-gray-800/50">
+                                                    <span className="w-6 h-6 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin mb-4"></span>
+                                                    <p className="text-sm text-gray-400">Translating transcript...</p>
+                                                </div>
+                                            ) : formattedTranscript ? (
                                                 <div className="space-y-4">
                                                     {formattedTranscript.split('\n\n').map((paragraph, i) => (
                                                         <p key={i} className="text-sm text-gray-300 leading-relaxed bg-gray-900/50 rounded-xl p-4">
                                                             {paragraph}
                                                         </p>
                                                     ))}
-                                                    <p className="text-xs text-gray-500 italic mt-2">✨ Transcript formatted & translated by AI</p>
+                                                    <p className="text-xs text-gray-500 italic mt-2">✨ Transcript automatically formatted & translated</p>
                                                 </div>
                                             ) : (
                                                 <p className="text-sm text-gray-400 leading-relaxed whitespace-pre-wrap bg-gray-900/50 rounded-xl p-4 max-h-64 overflow-y-auto">

@@ -32,5 +32,9 @@ contextBridge.exposeInMainWorld("electron", {
   // Pre-warm TTS WebSocket connection for a given voice (call before first phrase)
   warmEdgeTTS: async (voice) => {
     await ipcRenderer.invoke("warm-edge-tts", voice);
+  },
+  // Google Translate via main process (bypasses renderer CORS/CSP)
+  fetchGoogleTranslate: async (url) => {
+    return await ipcRenderer.invoke("fetch-google-translate", url);
   }
 });

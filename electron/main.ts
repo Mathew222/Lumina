@@ -249,6 +249,20 @@ app.whenReady().then(() => {
         });
     });
 
+    // Google Translate — routed through main process to avoid renderer CORS/CSP issues
+    ipcMain.handle('fetch-google-translate', async (_event, url: string) => {
+        try {
+            const response = await fetch(url, {
+                headers: { 'User-Agent': 'Mozilla/5.0' }
+            });
+            if (!response.ok) throw new Error(`Status ${response.status}`);
+            return await response.json();
+        } catch (error: any) {
+            console.error('[Google Translate IPC] Error:', error.message);
+            return null;
+        }
+    });
+
     // Make NVIDIA API calls from main process to bypass browser CORS restrictions
     ipcMain.handle('fetch-nvidia-api', async (_event, { url, options }) => {
         try {

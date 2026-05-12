@@ -10,12 +10,14 @@ const NVIDIA_API_BASE_URL = 'https://integrate.api.nvidia.com/v1/chat/completion
 const NVIDIA_MODEL = import.meta.env.VITE_NVIDIA_MODEL || 'deepseek-ai/deepseek-v4-flash';
 
 // ─── Rate limiter ─────────────────────────────────────────────────────────────
-// NVIDIA free tier: ~40 RPM — we cap at 30 to stay safe
-const MAX_RPM = 30;
+// NVIDIA free tier: ~60 RPM — we cap at 50 to stay safe
+const MAX_RPM = 50;
 const WINDOW_MS = 60_000;
 const requestTimestamps: number[] = [];
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T> =>
+    Promise.race([promise, new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Request timed out after ${ms / 1000}s`)), ms))]);
 
 async function acquireRateLimit(): Promise<void> {
     while (true) {
@@ -75,38 +77,46 @@ async function callNvidiaAPI(
         try {
             let result;
             if (window.electron && window.electron.fetchNvidiaAPI) {
-                result = await window.electron.fetchNvidiaAPI(NVIDIA_API_BASE_URL, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${apiKey}`,
-                    },
-                    body: JSON.stringify({
-                        model: NVIDIA_MODEL,
-                        messages: [{ role: 'user', content: userPrompt }],
-                        temperature,
-                        top_p: 0.9,
-                        max_tokens: maxTokens,
-                        stream: false,
-                    })
-                });
+                result = await withTimeout(
+                    window.electron.fetchNvidiaAPI(NVIDIA_API_BASE_URL, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${apiKey}`,
+                        },
+                        body: JSON.stringify({
+                            model: NVIDIA_MODEL,
+                            messages: [{ role: 'user', content: userPrompt }],
+                            temperature,
+                            top_p: 0.9,
+                            max_tokens: maxTokens,
+                            stream: false,
+                            reasoning_effort: 'none', // disable thinking mode for speed
+                        }),
+                    }),
+                    180_000
+                );
             } else {
                 // Fallback for non-Electron environment (might hit CORS)
-                const response = await fetch(NVIDIA_API_BASE_URL, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${apiKey}`,
-                    },
-                    body: JSON.stringify({
-                        model: NVIDIA_MODEL,
-                        messages: [{ role: 'user', content: userPrompt }],
-                        temperature,
-                        top_p: 0.9,
-                        max_tokens: maxTokens,
-                        stream: false,
-                    })
-                });
+                const response = await withTimeout(
+                    fetch(NVIDIA_API_BASE_URL, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${apiKey}`,
+                        },
+                        body: JSON.stringify({
+                            model: NVIDIA_MODEL,
+                            messages: [{ role: 'user', content: userPrompt }],
+                            temperature,
+                            top_p: 0.9,
+                            max_tokens: maxTokens,
+                            stream: false,
+                            reasoning_effort: 'none',
+                        }),
+                    }),
+                    180_000
+                );
                 const data = await response.json().catch(() => ({}));
                 result = {
                     ok: response.ok,
@@ -121,8 +131,13 @@ async function callNvidiaAPI(
                 return { success: true, text };
             }
 
+            // Log full error for debugging
+            console.error('[NVIDIA API] Error response:', JSON.stringify(result));
+
             const errorData = result.data;
-            const errorMessage = errorData?.message || `API request failed with status ${result.status}`;
+            const errorMessage = errorData?.message
+                || result.error  // catch the { error: '...' } shape from main process
+                || `API request failed with status ${result.status}`;
 
             if (result.status === 401 || result.status === 403) {
                 return { success: false, status: result.status, message: 'Invalid NVIDIA API key. Check VITE_NVIDIA_API_KEY in your .env file.' };
@@ -141,6 +156,7 @@ async function callNvidiaAPI(
 
             return { success: false, status: result.status, message: errorMessage };
         } catch (err) {
+            console.error('[NVIDIA API] Caught exception:', err);
             return {
                 success: false,
                 message: err instanceof Error ? err.message : 'Network error connecting to NVIDIA API.'
@@ -160,26 +176,20 @@ const getSummarizationPrompt = (outputLanguage: string = 'en') => {
             ? `\n- IMPORTANT: Write ALL text content in ${outputLanguage}.`
             : '';
 
-    return `You are an AI assistant that summarizes conversations. Analyze the following transcript and provide a structured summary.
+    return `Summarize the following conversation transcript. Output ONLY a raw JSON object — no markdown, no code fences, no explanation text before or after.
 
 TRANSCRIPT:
 {transcript}
 
-Please provide your response in the following JSON format exactly (no markdown, just pure JSON):
-{
-  "briefSummary": "A concise 2-3 sentence summary of the entire conversation",
-  "keyPoints": ["Key point 1", "Key point 2", "Key point 3"],
-  "topics": ["Topic 1", "Topic 2", "Topic 3"],
-  "actionItems": ["Action item 1", "Action item 2"] 
-}
+Output this exact JSON structure with no other text:
+{"briefSummary":"2-3 sentence summary","keyPoints":["point 1","point 2","point 3"],"topics":["topic 1","topic 2"],"actionItems":["action 1"]}
 
 Rules:
-- briefSummary should capture the main essence of the conversation
-- keyPoints should be 3-7 important takeaways
-- topics should be 2-5 main themes/subjects discussed (single words or short phrases)
-- actionItems should list any tasks, to-dos, or next steps mentioned (can be empty array if none)
-- Keep all text concise and clear
-- Return ONLY valid JSON, no additional text, no markdown code blocks${languageInstruction}`;
+- briefSummary: 2-3 sentences capturing the main essence
+- keyPoints: 3-7 important takeaways (array of strings)
+- topics: 2-5 main themes/subjects (short phrases, array of strings)
+- actionItems: tasks or next steps mentioned, or empty array []
+- Output ONLY the JSON object. No text before or after it.${languageInstruction}`;
 };
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -207,9 +217,16 @@ export async function summarizeConversation(
         };
     }
 
+    // Truncate to avoid very long prompts which slow the model significantly.
+    // 8000 chars ≈ 2000 tokens — more than enough for an accurate summary.
+    const MAX_TRANSCRIPT_CHARS = 8000;
+    const truncated = transcript.length > MAX_TRANSCRIPT_CHARS
+        ? transcript.slice(0, MAX_TRANSCRIPT_CHARS) + '\n[...transcript truncated for summary]'
+        : transcript;
+
     try {
-        const prompt = getSummarizationPrompt(outputLanguage).replace('{transcript}', transcript);
-        const result = await callNvidiaAPI(apiKey, prompt, 0.3, 1024);
+        const prompt = getSummarizationPrompt(outputLanguage).replace('{transcript}', truncated);
+        const result = await callNvidiaAPI(apiKey, prompt, 0.3, 700);
 
         if (!result.success) {
             return {
@@ -218,31 +235,45 @@ export async function summarizeConversation(
             };
         }
 
-        // Strip markdown code fences if present
+        // 1. Strip markdown code fences
         let cleanJson = result.text.trim();
         cleanJson = cleanJson.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
 
-        try {
-            const summary: Summary = JSON.parse(cleanJson);
-
-            if (!summary.briefSummary || !Array.isArray(summary.keyPoints) ||
-                !Array.isArray(summary.topics) || !Array.isArray(summary.actionItems)) {
-                throw new Error('Invalid response structure');
-            }
-
-            return { success: true, summary };
-        } catch {
-            console.error('[NVIDIA] Failed to parse response:', result.text);
-            return {
-                success: true,
-                summary: {
-                    briefSummary: result.text.slice(0, 300),
-                    keyPoints: ['Unable to parse structured response'],
-                    topics: ['Conversation'],
-                    actionItems: []
+        // 2. Try direct parse
+        const tryParse = (str: string): Summary | null => {
+            try {
+                const parsed = JSON.parse(str);
+                if (parsed.briefSummary && Array.isArray(parsed.keyPoints) &&
+                    Array.isArray(parsed.topics) && Array.isArray(parsed.actionItems)) {
+                    return parsed as Summary;
                 }
-            };
+            } catch { /* continue */ }
+            return null;
+        };
+
+        let summary = tryParse(cleanJson);
+
+        // 3. Try extracting JSON object from response (model may have added text before/after)
+        if (!summary) {
+            const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
+            if (jsonMatch) summary = tryParse(jsonMatch[0]);
         }
+
+        if (summary) return { success: true, summary };
+
+        // 4. Last resort: parse plain text into structured fields — NEVER show raw JSON to user
+        console.warn('[NVIDIA] Could not parse JSON, building fallback from text.');
+        const lines = result.text.split('\n').map(l => l.trim()).filter(Boolean);
+        const meaningfulLines = lines.filter(l => !l.startsWith('{') && !l.startsWith('}') && !l.startsWith('"') && l.length > 10);
+        return {
+            success: true,
+            summary: {
+                briefSummary: meaningfulLines[0] || 'Summary of the recorded conversation.',
+                keyPoints: meaningfulLines.slice(1, 5).length ? meaningfulLines.slice(1, 5) : ['Review the full transcript for details.'],
+                topics: ['Conversation'],
+                actionItems: []
+            }
+        };
     } catch (error) {
         return {
             success: false,
@@ -263,17 +294,17 @@ const getFormattingPrompt = (outputLanguage: string = 'en') => {
             ? `\nIMPORTANT: You MUST translate the entire formatted transcript into ${outputLanguage}.`
             : '';
 
-    return `You are an AI editor. Your task is to clean up a raw, machine-generated speech transcript.
+    return `You are an expert AI editor and linguist. Your task is to process a raw, machine-generated speech transcript. Speech-to-text engines often mishear words, generating random or nonsensical phrases.
 
 RAW TRANSCRIPT:
 {transcript}
 
 Instructions:
-1. Fix punctuation, capitalization, and grammar.
-2. Remove obvious verbal filler words (um, uh) and false starts/stutters.
-3. Break the text into readable paragraphs where appropriate.
-4. DO NOT summarize the content. Keep the full meaning and detail of the original text.
-5. DO NOT add any markdown formatting like bolding or headers. Return pure, clean text.${languageInstruction}`;
+1. CORRECT RECOGNITION ERRORS: If any words or phrases seem random, broken, or nonsensical, infer the intended meaning based on the context of the conversation and fix them.
+2. MAKE IT MEANINGFUL: Rewrite the text so it flows logically and makes complete sense, while keeping the EXACT SAME level of detail. 
+3. DO NOT SUMMARIZE: You must keep the full transcript. Do not shorten it.
+4. CLEAN UP: Fix punctuation, capitalization, and grammar. Remove stutters or filler words (um, uh).
+5. FORMATTING: Break the text into readable paragraphs. Return pure, clean text without any markdown bolding or headers.${languageInstruction}`;
 };
 
 /**

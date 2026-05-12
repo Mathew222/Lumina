@@ -274,3 +274,110 @@ export function playAudioBuffer(
         if (onError) onError(err instanceof Error ? err : new Error(String(err)));
     }
 }
+
+// ────────────────────────────────────────────────
+// Streaming long-text TTS
+// Splits into sentences, pre-fetches the next while the current plays.
+// Starts playing the FIRST sentence almost immediately.
+// ────────────────────────────────────────────────
+let longTextStopFlag = false;
+
+export function stopLongText(): void {
+    longTextStopFlag = true;
+    stopAudio();
+}
+
+/**
+ * Speak a long text by splitting into sentences and streaming them.
+ * The first sentence starts playing within ~300ms regardless of text length.
+ */
+export async function speakLongText(
+    text: string,
+    lang: string = 'en',
+    rate: number = 0.9,
+    onStart?: () => void,
+    onEnd?: () => void,
+    onError?: (e: Error) => void
+): Promise<void> {
+    if (!text.trim()) return;
+
+    longTextStopFlag = false;
+
+    // Split into sentences (. ! ? ।) keeping delimiter
+    const rawSentences = text.match(/[^.!?।]+[.!?।]+|[^.!?।]+$/g) || [text];
+    // Group short sentences together (<=80 chars) to reduce IPC calls
+    const CHUNK_MIN = 80;
+    const sentences: string[] = [];
+    let buf = '';
+    for (const s of rawSentences) {
+        buf += s;
+        if (buf.length >= CHUNK_MIN) { sentences.push(buf.trim()); buf = ''; }
+    }
+    if (buf.trim()) sentences.push(buf.trim());
+
+    if (sentences.length === 0) return;
+
+    const electron = (window as any).electron;
+    const voice = EDGE_VOICE_MAP[lang] || 'en-US-AriaNeural';
+    const ctx = getAudioContext();
+
+    // Helper: fetch one sentence → AudioBuffer
+    const fetchSentence = async (s: string): Promise<AudioBuffer | null> => {
+        if (!electron?.synthesizeEdgeTTS || !s.trim()) return null;
+        try {
+            const ab: ArrayBuffer = await electron.synthesizeEdgeTTS(s, voice);
+            if (ctx.state === 'suspended') await ctx.resume();
+            return await ctx.decodeAudioData(ab.slice(0));
+        } catch { return null; }
+    };
+
+    // Fetch first two immediately (so playback starts fast AND next is pre-loaded)
+    const buffers: (AudioBuffer | null)[] = new Array(sentences.length).fill(null);
+    const fetchQueue: Promise<void>[] = [];
+
+    const prefetch = (i: number) => {
+        if (i >= sentences.length) return;
+        const p = fetchSentence(sentences[i]).then(buf => { buffers[i] = buf; });
+        fetchQueue.push(p);
+    };
+
+    prefetch(0);
+    prefetch(1);
+
+    // Play each sentence in order
+    let started = false;
+    for (let i = 0; i < sentences.length; i++) {
+        if (longTextStopFlag) break;
+
+        // Wait for this sentence's buffer
+        if (fetchQueue[i]) await fetchQueue[i];
+        if (longTextStopFlag) break;
+
+        const buf = buffers[i];
+        if (!buf) {
+            // Edge TTS failed — fallback to WebSpeech for this sentence
+            if ('speechSynthesis' in window) {
+                await speakWithWebSpeech(sentences[i], lang, rate,
+                    !started ? () => { started = true; if (onStart) onStart(); } : undefined,
+                    undefined, undefined);
+            }
+            prefetch(i + 2);
+            continue;
+        }
+
+        // Pre-fetch the one 2 ahead while current plays
+        prefetch(i + 2);
+
+        await new Promise<void>((resolve) => {
+            playAudioBuffer(
+                buf, rate,
+                !started ? () => { started = true; if (onStart) onStart(); } : undefined,
+                resolve,
+                () => resolve()
+            );
+        });
+    }
+
+    if (!longTextStopFlag && onEnd) onEnd();
+}
+

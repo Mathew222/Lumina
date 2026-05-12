@@ -21267,6 +21267,18 @@ import_electron.app.whenReady().then(() => {
       req.end();
     });
   });
+  import_electron.ipcMain.handle("fetch-google-translate", async (_event, url) => {
+    try {
+      const response = await fetch(url, {
+        headers: { "User-Agent": "Mozilla/5.0" }
+      });
+      if (!response.ok) throw new Error(`Status ${response.status}`);
+      return await response.json();
+    } catch (error) {
+      console.error("[Google Translate IPC] Error:", error.message);
+      return null;
+    }
+  });
   import_electron.ipcMain.handle("fetch-nvidia-api", async (_event, { url, options }) => {
     try {
       const response = await fetch(url, options);

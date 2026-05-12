@@ -20,11 +20,23 @@ const pendingRequests = new Map<string, Promise<string>>();
 // API helpers
 // ────────────────────────────────────────────────
 
-async function googleTranslate(text: string, targetLang: SupportedLanguage, timeoutMs = 3000): Promise<string> {
+async function googleTranslate(text: string, targetLang: SupportedLanguage, timeoutMs = 8000): Promise<string> {
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
+
+    // In Electron, route through main process to bypass CORS/CSP restrictions
+    const electron = (window as any).electron;
+    if (electron?.fetchGoogleTranslate) {
+        const data = await electron.fetchGoogleTranslate(url);
+        if (!data) throw new Error('Empty translate response');
+        let out = '';
+        if (data?.[0]) for (const seg of data[0]) if (seg?.[0]) out += seg[0];
+        return out;
+    }
+
+    // Direct fetch fallback (non-Electron)
     const ctrl = new AbortController();
     const tid = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
-        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
         const res = await fetch(url, { signal: ctrl.signal });
         clearTimeout(tid);
         if (!res.ok) throw new Error(`${res.status}`);
@@ -122,4 +134,42 @@ export function clearTranslationContext(): void { /* no-op */ }
 export function clearTranslationCache(): void {
     translationCache.clear();
     pendingRequests.clear();
+}
+
+/**
+ * Translate a long text (e.g. full transcript) via Google Translate.
+ * Splits into ~4500 char chunks at sentence boundaries to avoid API limits.
+ */
+export async function translateLongText(
+    text: string,
+    targetLang: SupportedLanguage
+): Promise<string> {
+    if (targetLang === 'en' || !text.trim()) return text;
+
+    const CHUNK_SIZE = 4500;
+    if (text.length <= CHUNK_SIZE) {
+        try { return await googleTranslate(text, targetLang, 10000); } catch { return text; }
+    }
+
+    // Split at sentence boundaries (. ! ?)
+    const sentences = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [text];
+    const chunks: string[] = [];
+    let current = '';
+
+    for (const s of sentences) {
+        if ((current + s).length > CHUNK_SIZE && current.length > 0) {
+            chunks.push(current.trim());
+            current = s;
+        } else {
+            current += s;
+        }
+    }
+    if (current.trim()) chunks.push(current.trim());
+
+    const results = await Promise.all(
+        chunks.map(chunk =>
+            googleTranslate(chunk, targetLang, 10000).catch(() => chunk)
+        )
+    );
+    return results.join(' ');
 }
