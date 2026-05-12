@@ -18,6 +18,7 @@ interface SummaryViewProps {
     onTranslate?: (language: 'en' | 'ml') => void;
     isTranslating?: boolean;
     currentLanguage?: 'en' | 'ml';
+    streamText?: string;
 }
 
 export const SummaryView = ({
@@ -33,7 +34,8 @@ export const SummaryView = ({
     geminiApiKey = '',
     onTranslate,
     isTranslating = false,
-    currentLanguage = 'en'
+    currentLanguage = 'en',
+    streamText = ''
 }: SummaryViewProps) => {
     const RAG_COOLDOWN_MS = 8000;
     const [copied, setCopied] = useState(false);
@@ -267,10 +269,23 @@ ${formattedTranscript ? `\n📄 Formatted Transcript:\n${formattedTranscript}` :
                         {isLoading ? (
                         /* Loading State */
                         <div className="space-y-6">
-                            <div className="bg-gray-800/50 rounded-2xl p-6 animate-pulse">
-                                <div className="h-4 bg-gray-700 rounded w-3/4 mb-3"></div>
-                                <div className="h-4 bg-gray-700 rounded w-full mb-3"></div>
-                                <div className="h-4 bg-gray-700 rounded w-5/6"></div>
+                            <div className="bg-gray-800/50 rounded-2xl p-6">
+                                <div className="flex items-center gap-3 mb-4">
+                                    <span className="w-2 h-2 bg-purple-500 rounded-full animate-pulse"></span>
+                                    <p className="text-sm text-gray-400">Generating summary...</p>
+                                </div>
+                                {streamText ? (
+                                    <div className="font-mono text-xs text-purple-300/80 bg-gray-900/60 rounded-xl p-4 max-h-48 overflow-y-auto leading-relaxed whitespace-pre-wrap">
+                                        {streamText}
+                                        <span className="inline-block w-1.5 h-3.5 bg-purple-400 ml-0.5 animate-pulse align-middle" />
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3 animate-pulse">
+                                        <div className="h-4 bg-gray-700 rounded w-3/4"></div>
+                                        <div className="h-4 bg-gray-700 rounded w-full"></div>
+                                        <div className="h-4 bg-gray-700 rounded w-5/6"></div>
+                                    </div>
+                                )}
                             </div>
                             <div className="flex gap-4">
                                 <div className="flex-1 bg-gray-800/50 rounded-2xl p-4 animate-pulse">
@@ -290,10 +305,6 @@ ${formattedTranscript ? `\n📄 Formatted Transcript:\n${formattedTranscript}` :
                                     </div>
                                 </div>
                             </div>
-                            <p className="text-center text-sm text-gray-500 flex items-center justify-center gap-2">
-                                <span className="w-2 h-2 bg-purple-500 rounded-full animate-pulse"></span>
-                                Processing conversation summary...
-                            </p>
                         </div>
                     ) : error ? (
                         /* Error State */

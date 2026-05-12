@@ -282,6 +282,47 @@ app.whenReady().then(() => {
         }
     });
 
+    // Streaming NVIDIA API — pushes SSE delta chunks back to renderer in real-time
+    ipcMain.handle('fetch-nvidia-api-stream', async (event, { url, options, requestId }) => {
+        try {
+            // Force stream:true in the body
+            const body = JSON.parse(options.body || '{}');
+            body.stream = true;
+            const streamOptions = { ...options, body: JSON.stringify(body) };
+
+            const response = await fetch(url, streamOptions);
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                return { ok: false, status: response.status, data: errData };
+            }
+
+            const reader = (response.body as any).getReader();
+            const decoder = new TextDecoder();
+            let buf = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buf += decoder.decode(value, { stream: true });
+                const lines = buf.split('\n');
+                buf = lines.pop() || '';
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    const data = line.slice(6).trim();
+                    if (data === '[DONE]') continue;
+                    try {
+                        const parsed = JSON.parse(data);
+                        const content = parsed.choices?.[0]?.delta?.content || '';
+                        if (content) event.sender.send(`nvidia-chunk-${requestId}`, content);
+                    } catch { /* skip malformed SSE */ }
+                }
+            }
+            return { ok: true };
+        } catch (error: any) {
+            return { ok: false, status: 500, error: error.message };
+        }
+    });
+
     // Microsoft Edge Neural TTS — returns MP3 audio buffer for playback
     // Uses a persistent per-voice connection to avoid WebSocket cold-start on every phrase.
     ipcMain.handle('synthesize-edge-tts', async (_event, { text, voice }: { text: string; voice: string }) => {

@@ -36,5 +36,12 @@ contextBridge.exposeInMainWorld('electron', {
     // Google Translate via main process (bypasses renderer CORS/CSP)
     fetchGoogleTranslate: async (url: string): Promise<any> => {
         return await ipcRenderer.invoke('fetch-google-translate', url);
+    },
+    // Streaming NVIDIA API — calls onChunk for each token as it arrives
+    fetchNvidiaAPIStream: (url: string, options: any, requestId: string, onChunk: (chunk: string) => void): Promise<any> => {
+        const listener = (_evt: any, chunk: string) => onChunk(chunk);
+        ipcRenderer.on(`nvidia-chunk-${requestId}`, listener);
+        return ipcRenderer.invoke('fetch-nvidia-api-stream', { url, options, requestId })
+            .finally(() => ipcRenderer.removeListener(`nvidia-chunk-${requestId}`, listener));
     }
 });

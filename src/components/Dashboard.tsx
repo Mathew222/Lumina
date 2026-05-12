@@ -54,6 +54,7 @@ export const Dashboard = () => {
     const [currentRecordedAt, setCurrentRecordedAt] = useState<string>('');
     const [currentDuration, setCurrentDuration] = useState<number>(0);
     const [currentSessionId, setCurrentSessionId] = useState<string>('');
+    const [summaryStreamText, setSummaryStreamText] = useState<string>(''); // live streaming text
 
     // Session History State
     const [showSessionHistory, setShowSessionHistory] = useState(false);
@@ -537,10 +538,16 @@ export const Dashboard = () => {
         setCurrentFormattedTranscript(''); // reset translated transcript
         setSummaryError(null);
 
-        // Summary via DeepSeek (runs independently)
+        // Summary via DeepSeek streaming (runs independently)
         const handleSummary = async () => {
             try {
-                const summaryResult = await summarizeConversation(fullTranscript, geminiApiKey, summaryLanguage);
+                setSummaryStreamText(''); // clear any previous stream
+                const summaryResult = await summarizeConversation(
+                    fullTranscript,
+                    geminiApiKey,
+                    summaryLanguage,
+                    (partial) => setSummaryStreamText(partial) // update live as tokens arrive
+                );
                 if (summaryResult.success) {
                     setCurrentSummary(summaryResult.summary);
                     session.summary = summaryResult.summary;
@@ -561,9 +568,9 @@ export const Dashboard = () => {
                 console.error("Summarization error:", err);
                 setSummaryError("An unexpected error occurred while generating the summary.");
             } finally {
+                setSummaryStreamText('');
                 setIsSummarizing(false);
                 isSummarizingRef.current = false;
-                // Save session after summary is done
                 try { saveSession(session); } catch (e: any) { console.warn("Storage warning:", e.message); }
             }
         };
@@ -1205,9 +1212,10 @@ export const Dashboard = () => {
                     duration={currentDuration}
                     recordedAt={currentRecordedAt}
                     geminiApiKey={geminiApiKey}
+                    streamText={summaryStreamText}
                     onClose={() => {
                         setShowSummaryPanel(false);
-                        setSummaryLanguage('en'); // Reset language on close
+                        setSummaryLanguage('en');
                     }}
                     onTranslate={handleTranslateSummary}
                     isTranslating={isSummarizing}

@@ -57,6 +57,60 @@ export interface RagAnswer {
 }
 
 /**
+ * Streaming version — calls onChunk for each token as it arrives.
+ * Returns the full accumulated text when done.
+ */
+async function callNvidiaAPIStreaming(
+    apiKey: string,
+    userPrompt: string,
+    onChunk: (partial: string) => void,
+    temperature = 0.3,
+    maxTokens = 700
+): Promise<{ success: true; text: string } | { success: false; message: string }> {
+    await acquireRateLimit();
+
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const electron = (window as any).electron;
+
+    if (!electron?.fetchNvidiaAPIStream) {
+        return callNvidiaAPI(apiKey, userPrompt, temperature, maxTokens);
+    }
+
+    const options = {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+            model: NVIDIA_MODEL,
+            messages: [{ role: 'user', content: userPrompt }],
+            temperature,
+            top_p: 0.9,
+            max_tokens: maxTokens,
+            stream: true,
+            reasoning_effort: 'none',
+        }),
+    };
+
+    let accumulated = '';
+    const result = await withTimeout(
+        electron.fetchNvidiaAPIStream(NVIDIA_API_BASE_URL, options, requestId, (chunk: string) => {
+            accumulated += chunk;
+            onChunk(accumulated);
+        }),
+        180_000
+    );
+
+    if (!result?.ok) {
+        console.error('[NVIDIA Stream] Error:', result);
+        return { success: false, message: result?.error || `Stream failed (${result?.status})` };
+    }
+    if (!accumulated) return { success: false, message: 'Empty streaming response.' };
+    return { success: true, text: accumulated };
+}
+
+/**
  * Core function: sends a chat message to NVIDIA API and returns the text response.
  */
 async function callNvidiaAPI(
@@ -201,7 +255,8 @@ Rules:
 export async function summarizeConversation(
     transcript: string,
     apiKey: string,
-    outputLanguage: string = 'en'
+    outputLanguage: string = 'en',
+    onStreamChunk?: (partial: string) => void
 ): Promise<{ success: true; summary: Summary } | { success: false; error: GeminiError }> {
     if (!apiKey || apiKey.trim() === '') {
         return {
@@ -226,7 +281,9 @@ export async function summarizeConversation(
 
     try {
         const prompt = getSummarizationPrompt(outputLanguage).replace('{transcript}', truncated);
-        const result = await callNvidiaAPI(apiKey, prompt, 0.3, 700);
+        const result = onStreamChunk
+            ? await callNvidiaAPIStreaming(apiKey, prompt, onStreamChunk, 0.3, 700)
+            : await callNvidiaAPI(apiKey, prompt, 0.3, 700);
 
         if (!result.success) {
             return {
